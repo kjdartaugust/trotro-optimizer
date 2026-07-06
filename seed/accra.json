@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "city": "Accra",
+    "country": "Ghana",
+    "currency": "GHS",
+    "note": "Approximate, community-seedable trotro network for Greater Accra. Fares/times are indicative and meant to be corrected via crowdsourcing."
+  },
+  "stations": [
+    { "slug": "circle",    "name": "Kwame Nkrumah Circle", "town": "Accra",   "lat": 5.5709, "lon": -0.2074 },
+    { "slug": "kaneshie",  "name": "Kaneshie Station",      "town": "Accra",   "lat": 5.5619, "lon": -0.2340 },
+    { "slug": "achimota",  "name": "Achimota Station",      "town": "Accra",   "lat": 5.6146, "lon": -0.2287 },
+    { "slug": "lapaz",     "name": "Lapaz",                 "town": "Accra",   "lat": 5.6060, "lon": -0.2540 },
+    { "slug": "madina",    "name": "Madina Station",        "town": "Madina",  "lat": 5.6836, "lon": -0.1667 },
+    { "slug": "adenta",    "name": "Adenta Station",        "town": "Adenta",  "lat": 5.7080, "lon": -0.1620 },
+    { "slug": "legon",     "name": "Legon (UG)",            "town": "Legon",   "lat": 5.6500, "lon": -0.1870 },
+    { "slug": "tetteh",    "name": "Tetteh Quarshie",       "town": "Accra",   "lat": 5.6180, "lon": -0.1730 },
+    { "slug": "37",        "name": "37 Station",            "town": "Accra",   "lat": 5.5850, "lon": -0.1870 },
+    { "slug": "osu",       "name": "Osu",                   "town": "Accra",   "lat": 5.5560, "lon": -0.1820 },
+    { "slug": "tudu",      "name": "Tudu Station",          "town": "Accra",   "lat": 5.5510, "lon": -0.2050 },
+    { "slug": "temastn",   "name": "Tema Station (CBD)",    "town": "Accra",   "lat": 5.5490, "lon": -0.2010 },
+    { "slug": "spintex",   "name": "Spintex Road",          "town": "Accra",   "lat": 5.6300, "lon": -0.1100 },
+    { "slug": "nungua",    "name": "Nungua",                "town": "Nungua",  "lat": 5.6000, "lon": -0.0800 },
+    { "slug": "tema",      "name": "Tema Station",          "town": "Tema",    "lat": 5.6690, "lon": -0.0170 },
+    { "slug": "dansoman",  "name": "Dansoman",              "town": "Accra",   "lat": 5.5360, "lon": -0.2620 },
+    { "slug": "kasoa",     "name": "Kasoa Station",         "town": "Kasoa",   "lat": 5.5340, "lon": -0.4160 }
+  ],
+  "routes": [
+    {
+      "name": "Circle – Madina (via 37, Legon)", "color": "#e63946",
+      "stops": [
+        { "slug": "circle", "fare": 0,    "min": 0 },
+        { "slug": "37",     "fare": 2.5,  "min": 12 },
+        { "slug": "tetteh", "fare": 1.5,  "min": 8 },
+        { "slug": "legon",  "fare": 2.0,  "min": 9 },
+        { "slug": "madina", "fare": 2.0,  "min": 10 }
+      ]
+    },
+    {
+      "name": "Circle – Kaneshie", "color": "#457b9d",
+      "stops": [
+        { "slug": "circle",   "fare": 0,   "min": 0 },
+        { "slug": "kaneshie", "fare": 2.0, "min": 10 }
+      ]
+    },
+    {
+      "name": "Circle – Achimota (via Lapaz)", "color": "#2a9d8f",
+      "stops": [
+        { "slug": "circle",   "fare": 0,   "min": 0 },
+        { "slug": "lapaz",    "fare": 2.0, "min": 11 },
+        { "slug": "achimota", "fare": 1.5, "min": 8 }
+      ]
+    },
+    {
+      "name": "Madina – Adenta", "color": "#f4a261",
+      "stops": [
+        { "slug": "madina", "fare": 0,   "min": 0 },
+        { "slug": "adenta", "fare": 2.0, "min": 12 }
+      ]
+    },
+    {
+      "name": "Kaneshie – Kasoa", "color": "#8338ec",
+      "stops": [
+        { "slug": "kaneshie", "fare": 0,   "min": 0 },
+        { "slug": "kasoa",    "fare": 5.0, "min": 40 }
+      ]
+    },
+    {
+      "name": "Tema Station – Tema (via Spintex, Nungua)", "color": "#ff006e",
+      "stops": [
+        { "slug": "temastn", "fare": 0,   "min": 0 },
+        { "slug": "spintex", "fare": 3.0, "min": 20 },
+        { "slug": "nungua",  "fare": 2.5, "min": 15 },
+        { "slug": "tema",    "fare": 2.5, "min": 18 }
+      ]
+    },
+    {
+      "name": "Circle – Osu", "color": "#06d6a0",
+      "stops": [
+        { "slug": "circle", "fare": 0,   "min": 0 },
+        { "slug": "osu",    "fare": 2.5, "min": 14 }
+      ]
+    },
+    {
+      "name": "Circle – Dansoman (via Kaneshie)", "color": "#3d5a80",
+      "stops": [
+        { "slug": "circle",   "fare": 0,   "min": 0 },
+        { "slug": "kaneshie", "fare": 2.0, "min": 10 },
+        { "slug": "dansoman", "fare": 2.0, "min": 12 }
+      ]
+    },
+    {
+      "name": "Tudu – Circle", "color": "#9c6644",
+      "stops": [
+        { "slug": "tudu",   "fare": 0,   "min": 0 },
+        { "slug": "circle", "fare": 1.5, "min": 8 }
+      ]
+    },
+    {
+      "name": "Tetteh Quarshie – Spintex", "color": "#118ab2",
+      "stops": [
+        { "slug": "tetteh",  "fare": 0,   "min": 0 },
+        { "slug": "spintex", "fare": 2.0, "min": 13 }
+      ]
+    }
+  ]
+}

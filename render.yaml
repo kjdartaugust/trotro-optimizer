@@ -1,0 +1,41 @@
+# Render Blueprint for the TroTro Optimizer API (free tier).
+# One-click: https://render.com/deploy?repo=https://github.com/kjdartaugust/trotro-optimizer
+# Or: Render Dashboard → New → Blueprint → pick this repo.
+#
+# Set DATABASE_URL / DATABASE_URL_SYNC to your Neon connection strings (marked sync:false below,
+# so Render prompts for them at deploy time and never stores them in git).
+services:
+  - type: web
+    name: trotro-api
+    runtime: docker
+    repo: https://github.com/kjdartaugust/trotro-optimizer
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Neon (Postgres + PostGIS). asyncpg URL for the app, psycopg URL for migrations.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_SYNC
+        sync: false
+      # Redis is optional — the API degrades gracefully (caching is best-effort). Leave unset
+      # on free tier, or point at an Upstash free Redis URL.
+      - key: REDIS_URL
+        value: ""
+      - key: SUPABASE_JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: DEV_AUTH
+        value: "true"
+      # Comma-separated allowed browser origins. Set to your Vercel URL after the frontend deploy.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AUTO_APPROVE_THRESHOLD
+        value: "0.75"
+      - key: DEFAULT_TRUST_SCORE
+        value: "20"
+      - key: FARE_REPORT_HALFLIFE_DAYS
+        value: "30"
