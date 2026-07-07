@@ -134,7 +134,7 @@ is hard-coded, so anyone can reproduce this from scratch.
 
 | Piece | URL |
 | --- | --- |
-| Frontend (Vercel) | _set after deploy_ |
+| Frontend (Vercel) | https://frontend-blush-five-v3pge1dl9r.vercel.app |
 | Backend API (Render) | https://trotro-api-gblb.onrender.com — `/health`, `/docs` |
 | Database host (Neon) | `ep-ancient-tree-assg5it7.c-4.eu-central-1.aws.neon.tech` (`neondb`) |
 
