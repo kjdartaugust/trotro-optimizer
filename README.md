@@ -135,8 +135,8 @@ is hard-coded, so anyone can reproduce this from scratch.
 | Piece | URL |
 | --- | --- |
 | Frontend (Vercel) | _set after deploy_ |
-| Backend API (Render) | _set after deploy_ |
-| Database host (Neon) | _set after deploy_ |
+| Backend API (Render) | https://trotro-api-gblb.onrender.com — `/health`, `/docs` |
+| Database host (Neon) | `ep-ancient-tree-assg5it7.c-4.eu-central-1.aws.neon.tech` (`neondb`) |
 
 ### 1. Database — Neon (Postgres + PostGIS)
 
