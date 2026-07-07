@@ -141,9 +141,13 @@ is hard-coded, so anyone can reproduce this from scratch.
 ### 1. Database — Neon (Postgres + PostGIS)
 
 1. Create a project at [neon.tech](https://neon.tech) (free tier). Region closest to Render.
-2. Copy the connection string. You need **two forms** of it (same credentials, different driver):
-   - `DATABASE_URL` — swap the scheme to `postgresql+asyncpg://…` and append `?sslmode=require`.
-   - `DATABASE_URL_SYNC` — use `postgresql+psycopg://…?sslmode=require`.
+2. Copy the connection string — use the **direct** endpoint (the host **without** `-pooler`;
+   asyncpg + Neon's PgBouncer pooler clashes on prepared statements). You need **two forms**
+   (same credentials, different driver):
+   - `DATABASE_URL` — scheme `postgresql+asyncpg://…` with `?ssl=require`. Use `ssl=require`,
+     **not** `sslmode=require`: SQLAlchemy's asyncpg dialect forwards `sslmode` as a kwarg that
+     asyncpg rejects, whereas `ssl=require` is accepted by both the app and the raw-asyncpg migration.
+   - `DATABASE_URL_SYNC` — scheme `postgresql+psycopg://…` with `?sslmode=require` (psycopg wants `sslmode`).
 3. Apply the schema + seed **once**, from `backend/` with those vars exported:
    ```bash
    pip install -r requirements.txt
