@@ -12,11 +12,12 @@ import type { Itinerary } from "@/engine/engine";
 
 const STYLE_URL = process.env.NEXT_PUBLIC_MAP_STYLE_URL;
 
+// No `glyphs` key: the style has no text/symbol layers, and setting glyphs to `undefined`
+// makes MapLibre's style validator throw ("glyphs: string expected, undefined found").
 const BLANK_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   sources: {},
   layers: [{ id: "bg", type: "background", paint: { "background-color": "#101a33" } }],
-  glyphs: undefined as unknown as string,
 };
 
 export default function MapView({
