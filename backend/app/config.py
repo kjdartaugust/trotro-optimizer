@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     fare_report_halflife_days: int = 30
 
     cors_origins: str = "http://localhost:3000"
+    # Optional regex alternative/supplement to the allowlist — handy for Vercel, whose per-deploy
+    # preview URLs change (e.g. r"https://.*\.vercel\.app"). Empty disables it.
+    cors_origin_regex: str = ""
 
     # Routing engine tuning
     walk_radius_m: float = 900.0        # max walk to/from a station or between stations
