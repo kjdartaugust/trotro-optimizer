@@ -126,10 +126,75 @@ time-decayed so fuel-price jumps converge quickly on the new consensus.
 
 ## Deployment
 
-- **Backend**: any container host (Fly.io / Render / Railway / Cloud Run) using `backend/Dockerfile`.
-- **DB/Auth**: Supabase (Postgres + PostGIS + Auth) — set `DATABASE_URL` + `SUPABASE_JWT_SECRET`.
-- **Redis**: Upstash / managed Redis — set `REDIS_URL`.
-- **Frontend**: Vercel / Netlify / any static+edge host — set `NEXT_PUBLIC_API_URL`.
+The reference deployment uses **free tiers only**: **Neon** (Postgres + PostGIS), **Render**
+(backend Docker), **Vercel** (Next.js PWA). Every value below comes from `.env.example`; nothing
+is hard-coded, so anyone can reproduce this from scratch.
+
+### Live URLs
+
+| Piece | URL |
+| --- | --- |
+| Frontend (Vercel) | _set after deploy_ |
+| Backend API (Render) | _set after deploy_ |
+| Database host (Neon) | _set after deploy_ |
+
+### 1. Database — Neon (Postgres + PostGIS)
+
+1. Create a project at [neon.tech](https://neon.tech) (free tier). Region closest to Render.
+2. Copy the connection string. You need **two forms** of it (same credentials, different driver):
+   - `DATABASE_URL` — swap the scheme to `postgresql+asyncpg://…` and append `?sslmode=require`.
+   - `DATABASE_URL_SYNC` — use `postgresql+psycopg://…?sslmode=require`.
+3. Apply the schema + seed **once**, from `backend/` with those vars exported:
+   ```bash
+   pip install -r requirements.txt
+   DATABASE_URL='postgresql+asyncpg://…?sslmode=require' python -m scripts.init_db   # extensions, tables, PostGIS geom, indexes
+   DATABASE_URL='postgresql+asyncpg://…?sslmode=require' python -m app.seed          # 17 Accra stations, 10 routes
+   ```
+   `init_db` is idempotent (`IF NOT EXISTS`); re-running is safe.
+
+### 2. Backend — Render (Docker, free web service)
+
+`render.yaml` is a one-click Blueprint. In the Render dashboard: **New → Blueprint → pick this
+repo**. It builds `backend/Dockerfile` and binds `$PORT` automatically. Set the two secrets it
+prompts for (`sync: false`, never stored in git):
+
+- `DATABASE_URL` / `DATABASE_URL_SYNC` — the Neon strings from step 1.
+- `CORS_ORIGINS` — leave blank for now; fill in the Vercel origin after step 3.
+
+`SUPABASE_JWT_SECRET` is auto-generated; `DEV_AUTH=true` lets `POST /auth/token` mint tokens
+without a Supabase project. `REDIS_URL` is optional — the API degrades gracefully without it.
+Health check is `/health`.
+
+### 3. Frontend — Vercel (Next.js PWA)
+
+Import the repo in Vercel with **Root Directory = `frontend`**. Set one env var:
+
+- `NEXT_PUBLIC_API_URL` = your Render backend URL (e.g. `https://trotro-api.onrender.com`).
+
+Or from the CLI, at the repo root:
+```bash
+vercel --cwd frontend --prod
+```
+
+### 4. Wire CORS + verify
+
+1. Back in Render, set `CORS_ORIGINS` to your Vercel origin (e.g. `https://trotro.vercel.app`)
+   and let it redeploy.
+2. Open the Vercel URL. Loading the map/dataset issues a live cross-origin call to Render → Neon.
+3. Confirm persistence end-to-end: submit a fare/route contribution in the app, then check it
+   landed with `curl https://<render-url>/sync/changes?since=0` (the new row appears) — proving
+   frontend → backend → Neon writes are flowing.
+
+### How to redeploy
+
+- **Code change** → `git push`. Render (`autoDeploy: true`) and Vercel both rebuild on push to the
+  default branch. That's the whole loop.
+- **Frontend only, on demand** → `vercel --cwd frontend --prod`.
+- **Backend only, on demand** → Render dashboard → **Manual Deploy → Deploy latest commit**.
+- **Env var change** → edit it in the Render/Vercel dashboard, then trigger a redeploy (env
+  changes don't rebuild automatically).
+- **Schema change** → add a new `backend/migrations/NNNN_*.sql`, then re-run `python -m scripts.init_db`
+  against `DATABASE_URL` (idempotent).
 
 See `.env.example` for every variable and `docker-compose.yml` for the local topology.
 
