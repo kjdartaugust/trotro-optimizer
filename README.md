@@ -191,14 +191,20 @@ vercel --cwd frontend --prod
 
 ### How to redeploy
 
-- **Code change** → `git push`. Render (`autoDeploy: true`) and Vercel both rebuild on push to the
-  default branch. That's the whole loop.
-- **Frontend only, on demand** → `vercel --cwd frontend --prod`.
-- **Backend only, on demand** → Render dashboard → **Manual Deploy → Deploy latest commit**.
+- **Backend** → `git push`. Render (`autoDeploy: true`) rebuilds on push to the default branch.
+- **Frontend** → `vercel --cwd frontend --prod` (this project deploys via the Vercel CLI, not a
+  git integration). Required after any `NEXT_PUBLIC_*` change, since those are inlined at build time.
 - **Env var change** → edit it in the Render/Vercel dashboard, then trigger a redeploy (env
   changes don't rebuild automatically).
 - **Schema change** → add a new `backend/migrations/NNNN_*.sql`, then re-run `python -m scripts.init_db`
   against `DATABASE_URL` (idempotent).
+
+### Keeping the free tier warm
+
+`.github/workflows/keep-alive.yml` pings `/health` every ~10 min so Render doesn't cold-start
+(and the health check's `SELECT 1` wakes Neon). Trigger it by hand from the Actions tab
+("Run workflow"). For a fork, set a repo Variable `BACKEND_URL` to your own backend; GitHub
+disables scheduled workflows after 60 days of repo inactivity (any push re-enables them).
 
 See `.env.example` for every variable and `docker-compose.yml` for the local topology.
 
