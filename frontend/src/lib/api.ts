@@ -1,4 +1,4 @@
-import type { DatasetSnapshot, QueuedContribution } from "./types";
+import type { ChangeSet, DatasetSnapshot, QueuedContribution } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -42,8 +42,8 @@ export async function fetchDataset(): Promise<DatasetSnapshot> {
   return req<DatasetSnapshot>("/sync/dataset");
 }
 
-export async function fetchChanges(since: number): Promise<DatasetSnapshot> {
-  return req<DatasetSnapshot>(`/sync/changes?since=${since}`);
+export async function fetchChanges(since: number): Promise<ChangeSet> {
+  return req<ChangeSet>(`/sync/changes?since=${since}`);
 }
 
 export async function pushOutbox(items: QueuedContribution[]) {

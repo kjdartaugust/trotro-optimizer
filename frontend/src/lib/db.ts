@@ -42,6 +42,35 @@ export async function setVersion(v: number): Promise<void> {
   await d.put("meta", Date.now(), "lastSync");
 }
 
+/** Which network this device holds (see NETWORK_GENERATION in sync.ts). */
+export async function getGeneration(): Promise<number> {
+  return ((await (await db()).get("meta", "generation")) as number) ?? 1;
+}
+
+export async function setGeneration(g: number): Promise<void> {
+  await (await db()).put("meta", g, "generation");
+}
+
+/** Forget the stored network (not the outbox), so the next pull downloads it whole. */
+export async function clearNetwork(): Promise<void> {
+  const d = await db();
+  const tx = d.transaction(["stations", "routes", "meta"], "readwrite");
+  await Promise.all([
+    tx.objectStore("stations").clear(),
+    tx.objectStore("routes").clear(),
+    tx.objectStore("meta").delete("version"),
+  ]);
+  await tx.done;
+}
+
+export async function deleteRows(store: "stations" | "routes", ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const d = await db();
+  const tx = d.transaction(store, "readwrite");
+  await Promise.all(ids.map((id) => tx.store.delete(id)));
+  await tx.done;
+}
+
 export async function getLastSync(): Promise<number | null> {
   return ((await (await db()).get("meta", "lastSync")) as number) ?? null;
 }

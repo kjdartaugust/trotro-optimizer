@@ -1,16 +1,15 @@
 """Apply an approved contribution to the canonical tables and bump sync versions."""
 from __future__ import annotations
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .loader import dataset_version
 from .models import Contribution, Route, RouteStop, Station
 
 
 async def _next_version(db: AsyncSession) -> int:
-    sv = (await db.execute(select(func.max(Station.version)))).scalar() or 0
-    rv = (await db.execute(select(func.max(Route.version)))).scalar() or 0
-    return max(sv, rv) + 1
+    # Past retirements too, or a device that synced one would never see this change.
+    return await dataset_version(db) + 1
 
 
 async def apply_contribution(db: AsyncSession, contrib: Contribution) -> None:

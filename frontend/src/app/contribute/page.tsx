@@ -54,7 +54,7 @@ export default function Contribute() {
       {msg && <p className="notice" style={{ color: "var(--ok)" }}>{msg}</p>}
 
       {tab === "fare" ? (
-        <FareForm routes={routes} onDone={setMsg} />
+        <FareForm routes={routes} stations={stations} onDone={setMsg} />
       ) : (
         <StationForm onDone={setMsg} />
       )}
@@ -62,11 +62,22 @@ export default function Contribute() {
   );
 }
 
-function FareForm({ routes, onDone }: { routes: ApiRoute[]; onDone: (m: string) => void }) {
+function FareForm({
+  routes,
+  stations,
+  onDone,
+}: {
+  routes: ApiRoute[];
+  stations: ApiStation[];
+  onDone: (m: string) => void;
+}) {
   const [routeId, setRouteId] = useState("");
   const [seq, setSeq] = useState("");
   const [fare, setFare] = useState("");
   const route = useMemo(() => routes.find((r) => r.id === routeId), [routes, routeId]);
+  // ~550 routes: alphabetical, so "Circle → …" are together.
+  const sorted = useMemo(() => [...routes].sort((a, b) => a.name.localeCompare(b.name)), [routes]);
+  const stationName = useMemo(() => new Map(stations.map((s) => [s.id, s.name])), [stations]);
 
   async function submit() {
     if (!routeId || seq === "" || fare === "") return;
@@ -84,7 +95,7 @@ function FareForm({ routes, onDone }: { routes: ApiRoute[]; onDone: (m: string) 
       <label>Route</label>
       <select value={routeId} onChange={(e) => setRouteId(e.target.value)}>
         <option value="">Select route…</option>
-        {routes.map((r) => (
+        {sorted.map((r) => (
           <option key={r.id} value={r.id}>
             {r.name}
           </option>
@@ -98,7 +109,8 @@ function FareForm({ routes, onDone }: { routes: ApiRoute[]; onDone: (m: string) 
           .filter((s) => s.seq > 0)
           .map((s) => (
             <option key={s.seq} value={s.seq}>
-              Stop #{s.seq} (current GHS {Number(s.fare_from_prev).toFixed(2)})
+              {stationName.get(s.station_id) ?? `Stop #${s.seq}`} (current GHS{" "}
+              {Number(s.fare_from_prev).toFixed(2)})
             </option>
           ))}
       </select>

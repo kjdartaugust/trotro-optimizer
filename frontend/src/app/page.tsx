@@ -2,9 +2,11 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import StationPicker from "@/components/StationPicker";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
 import { allStations } from "@/lib/db";
+import { haversineM } from "@/engine/engine";
 import { planOffline, type Itinerary, type Mode } from "@/lib/planner";
 import { syncAll } from "@/lib/sync";
 import type { ApiStation } from "@/lib/types";
@@ -24,6 +26,7 @@ export default function Home() {
   const [dest, setDest] = useState("");
   const [itineraries, setItineraries] = useState<Partial<Record<Mode, Itinerary>>>({});
   const [mode, setMode] = useState<Mode>("fastest");
+  const [estimated, setEstimated] = useState(false);
   const [online, setOnline] = useState(true);
   const [status, setStatus] = useState("Loading offline data…");
   const [err, setErr] = useState("");
@@ -61,11 +64,6 @@ export default function Home() {
     };
   }, [refreshStations]);
 
-  const sorted = useMemo(
-    () => [...stations].sort((a, b) => a.name.localeCompare(b.name)),
-    [stations]
-  );
-
   async function plan() {
     setErr("");
     const o = stations.find((s) => s.id === origin);
@@ -74,9 +72,16 @@ export default function Home() {
       setErr("Pick both a start and destination station.");
       return;
     }
-    const { itineraries } = await planOffline([o.lat, o.lon], [d.lat, d.lon]);
+    const { itineraries, estimated } = await planOffline([o.lat, o.lon], [d.lat, d.lon]);
+    setEstimated(estimated);
     if (!Object.keys(itineraries).length) {
-      setErr("No trotro route found between these points yet. Add one under Contribute!");
+      // The planner only offers trips with a trotro in them; two stops this close are a walk.
+      const m = haversineM(o.lat, o.lon, d.lat, d.lon);
+      setErr(
+        m <= 1500
+          ? `These stops are ${Math.round(m / 10) * 10} m apart, about ${Math.max(1, Math.round(m / 75))} min on foot.`
+          : "No trotro route found between these points yet. Add one under Contribute!"
+      );
       setItineraries({});
       return;
     }
@@ -106,25 +111,20 @@ export default function Home() {
       <div className="grid">
         <section className="card">
           <h2>Plan a trip</h2>
-          <label>From</label>
-          <select value={origin} onChange={(e) => setOrigin(e.target.value)}>
-            <option value="">Select start station…</option>
-            {sorted.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-
-          <label>To</label>
-          <select value={dest} onChange={(e) => setDest(e.target.value)}>
-            <option value="">Select destination…</option>
-            {sorted.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+          <StationPicker
+            label="From"
+            placeholder="Type a stop, e.g. Circle"
+            stations={stations}
+            value={origin}
+            onChange={setOrigin}
+          />
+          <StationPicker
+            label="To"
+            placeholder="Type a stop, e.g. Madina"
+            stations={stations}
+            value={dest}
+            onChange={setDest}
+          />
 
           <div style={{ height: 12 }} />
           <button onClick={plan} disabled={!origin || !dest}>
@@ -147,6 +147,13 @@ export default function Home() {
                 ))}
               </div>
               {active && <ItineraryView it={active} />}
+              {estimated && (
+                <p className="notice">
+                  Fares and times are estimates until riders report real ones: the minimum
+                  trotro fare when you board, plus a little per km.{" "}
+                  <Link href="/contribute">Report a fare</Link>
+                </p>
+              )}
             </>
           )}
         </section>
@@ -156,7 +163,12 @@ export default function Home() {
           <p className="notice">
             {process.env.NEXT_PUBLIC_MAP_STYLE_URL
               ? "Vector basemap active."
-              : "Schematic map (no basemap tiles) — fully offline. Set NEXT_PUBLIC_MAP_STYLE_URL for a MapLibre basemap."}
+              : "Schematic map (no basemap tiles) — fully offline. Set NEXT_PUBLIC_MAP_STYLE_URL for a MapLibre basemap."}{" "}
+            Stops and routes ©{" "}
+            <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+              OpenStreetMap contributors
+            </a>
+            .
           </p>
         </section>
       </div>
@@ -181,7 +193,8 @@ function ItineraryView({ it }: { it: Itinerary }) {
           <div className="l">Changes</div>
         </div>
       </div>
-      {it.legs.map((leg, i) => (
+      {/* A walk of a few metres is the trip starting or ending right at a stop: nothing to do. */}
+      {it.legs.filter((leg) => leg.kind === "ride" || leg.distanceM >= 25).map((leg, i) => (
         <div key={i} className={`leg ${leg.kind}`}>
           <div className="dot" />
           <div className="body">
@@ -190,7 +203,8 @@ function ItineraryView({ it }: { it: Itinerary }) {
                 <div className="main">Walk {Math.round(leg.distanceM)} m</div>
                 <div className="sub">
                   {leg.fromName ? `from ${leg.fromName} ` : ""}
-                  {leg.toName ? `to ${leg.toName}` : "to station"} · {Math.round(leg.minutes)} min
+                  {leg.toName ? `to ${leg.toName}` : "to your destination"} ·{" "}
+                  {Math.round(leg.minutes)} min
                 </div>
               </>
             ) : (

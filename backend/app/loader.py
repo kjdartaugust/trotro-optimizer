@@ -1,7 +1,9 @@
 """Load the network from the database into an in-memory routing Graph, cached in Redis.
 
 The built graph is deterministic given the dataset version, so we memoise it per-process and
-invalidate whenever the max row-version changes (i.e. any station/route was updated).
+invalidate whenever the max row-version changes (i.e. any station/route was updated or retired).
+Rows are read in id order, the order a device's IndexedDB hands them to the offline engine, so
+both engines see the network the same way round.
 """
 from __future__ import annotations
 
@@ -9,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
-from .models import Route, RouteStop, Station
+from .models import RetiredRow, Route, RouteStop, Station
 from .routing.engine import Graph, RouteStopT, RouteT, StationT, build_graph
 
 _cache: dict[str, tuple[int, Graph]] = {}
@@ -18,7 +20,8 @@ _cache: dict[str, tuple[int, Graph]] = {}
 async def dataset_version(db: AsyncSession) -> int:
     sv = (await db.execute(select(func.max(Station.version)))).scalar() or 0
     rv = (await db.execute(select(func.max(Route.version)))).scalar() or 0
-    return max(sv, rv)
+    xv = (await db.execute(select(func.max(RetiredRow.version)))).scalar() or 0
+    return max(sv, rv, xv)
 
 
 async def load_graph(db: AsyncSession) -> Graph:
@@ -27,8 +30,8 @@ async def load_graph(db: AsyncSession) -> Graph:
     if cached and cached[0] == version:
         return cached[1]
 
-    stations = (await db.execute(select(Station))).scalars().all()
-    routes = (await db.execute(select(Route))).scalars().all()
+    stations = (await db.execute(select(Station).order_by(Station.id))).scalars().all()
+    routes = (await db.execute(select(Route).order_by(Route.id))).scalars().all()
     stops = (await db.execute(select(RouteStop))).scalars().all()
 
     stops_by_route: dict[str, list[RouteStopT]] = {}
@@ -44,7 +47,8 @@ async def load_graph(db: AsyncSession) -> Graph:
 
     st = [StationT(id=s.id, name=s.name, lat=s.lat, lon=s.lon, town=s.town) for s in stations]
     rt = [
-        RouteT(id=r.id, name=r.name, color=r.color, stops=stops_by_route.get(r.id, []))
+        RouteT(id=r.id, name=r.name, color=r.color, stops=stops_by_route.get(r.id, []),
+               board_fare=float(r.board_fare or 0))
         for r in routes
     ]
 

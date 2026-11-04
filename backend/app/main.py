@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .config import settings
 from .routers import contributions, meta, moderation, routes, stations, sync
@@ -21,6 +22,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# /sync/dataset is the whole network (~1.5 MB of JSON); phones on mobile data fetch it once.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 for r in (meta, stations, routes, contributions, moderation, sync):
     app.include_router(r.router)

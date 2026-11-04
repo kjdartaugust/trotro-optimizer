@@ -81,3 +81,16 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .notice { font-size: 13px; color: var(--muted); padding: 8px 0; }
 .err { color: var(--danger); font-size: 13px; }
 .badge { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: var(--panel-2); color: var(--muted); }
+
+/* Station search: a list under the input, over whatever follows. */
+.picker { position: relative; }
+.suggest {
+  position: absolute; z-index: 5; left: 0; right: 0; margin: 4px 0 0; padding: 4px 0;
+  list-style: none; background: var(--panel-2); border: 1px solid #2b3862; border-radius: 10px;
+  max-height: 320px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.suggest li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; cursor: pointer; }
+.suggest li.active, .suggest li:hover { background: #2b3862; }
+.suggest .name { font-size: 14px; }
+.suggest .town { font-size: 12px; color: var(--muted); text-align: right; }
+.notice a { color: var(--accent-2); }

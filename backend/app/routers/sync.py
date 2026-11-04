@@ -1,7 +1,8 @@
 """Offline sync endpoints.
 
   * ``GET /sync/dataset``       — full versioned snapshot to seed a device.
-  * ``GET /sync/changes?since`` — deltas (rows whose ``version`` > cursor).
+  * ``GET /sync/changes?since`` — deltas (rows whose ``version`` > cursor), and the ids of
+                                  stations/routes retired since then, for the device to drop.
   * ``POST /sync/push``         — push queued offline contributions (idempotent by client_key).
 """
 from datetime import UTC, datetime
@@ -14,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from ..auth import get_optional_user
 from ..database import get_db
 from ..loader import dataset_version
-from ..models import Contribution, Route, Station, User
+from ..models import Contribution, RetiredRow, Route, Station, User
 from ..schemas import (
     ChangeSet,
     DatasetSnapshot,
@@ -52,7 +53,17 @@ async def changes(since: int = 0, db: AsyncSession = Depends(get_db)):
             select(Route).options(selectinload(Route.stops)).where(Route.version > since)
         )
     ).scalars().all()
-    return ChangeSet(since=since, version=version, stations=stations, routes=routes)
+    retired = (
+        await db.execute(select(RetiredRow).where(RetiredRow.version > since))
+    ).scalars().all()
+    return ChangeSet(
+        since=since,
+        version=version,
+        stations=stations,
+        routes=routes,
+        deleted_station_ids=[r.id for r in retired if r.kind == "station"],
+        deleted_route_ids=[r.id for r in retired if r.kind == "route"],
+    )
 
 
 @router.post("/push", response_model=PushResult)
