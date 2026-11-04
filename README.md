@@ -45,14 +45,15 @@ trotro-optimizer/
 │   ├── app/
 │   │   ├── routing/    Graph + multi-criteria Dijkstra (server mirror of TS engine)
 │   │   ├── routers/    /routes /stations /contributions /moderation /sync /auth
+│   │   ├── etl/        builds seed/accra.json from OpenStreetMap
 │   │   └── ...
 │   ├── migrations/     SQL schema (Postgres + PostGIS + H3 spatial index)
+│   ├── seed/           the network: accra.json (OpenStreetMap), demo.json (17-stop test network)
 │   └── tests/
 ├── frontend/           Next.js 14 PWA (App Router, MapLibre, IndexedDB, offline engine)
 │   └── src/
 │       ├── engine/     TypeScript routing engine (offline, mirrors backend)
 │       └── lib/        sync, db (IndexedDB), api client
-├── seed/               Accra stations + routes seed dataset (JSON)
 ├── docker-compose.yml  Postgres/PostGIS + Redis + backend + frontend
 └── .github/workflows/  CI (lint, test, build)
 ```
@@ -67,9 +68,10 @@ Supabase-compatible JWT auth · MapLibre GL · Docker Compose · GitHub Actions.
 ```bash
 cp .env.example .env          # fill in secrets (JWT secret etc.)
 docker compose up --build     # brings up db, redis, backend (:8000), frontend (:3000)
-# seed the database (first run):
-docker compose exec backend python -m app.seed
 ```
+
+The backend loads the network (`backend/seed/accra.json`) into the database each time it starts;
+`docker compose exec backend python -m app.seed` does the same by hand.
 
 - API docs (OpenAPI): http://localhost:8000/docs
 - App: http://localhost:3000
@@ -83,8 +85,8 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -r requirements.txt
 # start Postgres+PostGIS and Redis (docker compose up db redis)
 alembic upgrade head            # or: psql < migrations/0001_init.sql
+python -m app.seed              # load the network (safe to repeat; see below)
 uvicorn app.main:app --reload
-python -m app.seed
 ```
 
 **Frontend**
@@ -115,6 +117,40 @@ npm run dev
 | `POST` | `/sync/push` | user | push queued offline contributions |
 
 Full schema at `/docs` (Swagger) and `/openapi.json`.
+
+## The network: Accra's trotros, from OpenStreetMap
+
+`backend/seed/accra.json` holds **547 routes** (one per direction) and **1,753 stations**, built
+from OpenStreetMap, where Accra's trotro network is mapped as public-transport routes (network
+`trô trô`, from the 2015 Accra Mobility survey), each listing its stops in order.
+
+- **Stations.** A stop is usually mapped once per side of the road, and a big station as several
+  platforms; same-named stops within 300 m become one station. Each gets the nearest OSM place
+  as its area, which tells apart stops that share a name.
+- **Times.** Each route's own `travel_time`, shared between its stops by distance.
+- **Fares are estimates** until riders report real ones: the minimum approved trotro fare when
+  you board (GH¢5.50 since the 8% rise of 26 September 2026), plus GH¢0.25 per km of road. A
+  route's `board_fare` is charged once per boarding; its stops' `fare_from_prev` add to it.
+- **Walking** is to your first trotro, between two trotros, and from your last one, never stop
+  after stop: with stops a few hundred metres apart, the cheapest trip would otherwise be a free
+  walk across the city.
+
+Rebuild it (then regenerate the parity fixture, below):
+
+```bash
+cd backend
+python -m app.etl.osm_network            # fetches from Overpass, writes seed/accra.json
+python -m tests.parity                   # the trips both engines must agree on
+```
+
+**Loading it.** `python -m app.seed` syncs the database to the bundle, and the backend container
+runs it on every boot, so a deploy is all it takes. Ids are stable (from OSM ids), so it never
+duplicates anything. The first time it meets a database, it retires the rows an earlier seed
+loaded that the bundle doesn't have (the old demo network), and devices are told to drop them at
+their next sync. After that it only adds stations and routes that are missing. It never edits a
+row, so riders' fare reports and corrections survive every redeploy.
+
+Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL.
 
 ## Trust & moderation model
 
@@ -148,13 +184,13 @@ is hard-coded, so anyone can reproduce this from scratch.
      **not** `sslmode=require`: SQLAlchemy's asyncpg dialect forwards `sslmode` as a kwarg that
      asyncpg rejects, whereas `ssl=require` is accepted by both the app and the raw-asyncpg migration.
    - `DATABASE_URL_SYNC` — scheme `postgresql+psycopg://…` with `?sslmode=require` (psycopg wants `sslmode`).
-3. Apply the schema + seed **once**, from `backend/` with those vars exported:
+3. Apply the base schema **once**, from `backend/` with those vars exported:
    ```bash
    pip install -r requirements.txt
    DATABASE_URL='postgresql+asyncpg://…?sslmode=require' python -m scripts.init_db   # extensions, tables, PostGIS geom, indexes
-   DATABASE_URL='postgresql+asyncpg://…?sslmode=require' python -m app.seed          # 17 Accra stations, 10 routes
    ```
-   `init_db` is idempotent (`IF NOT EXISTS`); re-running is safe.
+   `init_db` is idempotent (`IF NOT EXISTS`); re-running is safe. The network loads by itself
+   when the backend starts (later migrations too); `python -m app.seed` does it by hand.
 
 ### 2. Backend — Render (Docker, free web service)
 
@@ -196,8 +232,8 @@ vercel --cwd frontend --prod
   git integration). Required after any `NEXT_PUBLIC_*` change, since those are inlined at build time.
 - **Env var change** → edit it in the Render/Vercel dashboard, then trigger a redeploy (env
   changes don't rebuild automatically).
-- **Schema change** → add a new `backend/migrations/NNNN_*.sql`, then re-run `python -m scripts.init_db`
-  against `DATABASE_URL` (idempotent).
+- **Schema change** → add a new, idempotent `backend/migrations/NNNN_*.sql`: the backend runs
+  every migration after 0001 when it starts (`python -m app.seed --boot`).
 
 ### Keeping the free tier warm
 
@@ -211,9 +247,12 @@ See `.env.example` for every variable and `docker-compose.yml` for the local top
 ## Tests
 
 ```bash
-cd backend && pytest              # routing engine + API + trust scoring
+cd backend && pytest              # routing engine + API + trust scoring + the OSM import
 cd frontend && npm test           # engine parity + sync logic
 ```
+
+Both engines are held to the same answers on 30 real trips across the network
+(`backend/tests/fixtures/parity.json`); the network sync is tested against CI's Postgres.
 
 ## License
 
