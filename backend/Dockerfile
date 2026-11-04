@@ -19,7 +19,10 @@ COPY . .
 EXPOSE 8000
 
 # Bind to $PORT when the platform provides it (Render/Cloud Run), else 8000 (Docker Compose).
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS "http://localhost:${PORT:-8000}/health" || exit 1
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Bring the network up to seed/accra.json first (and the migrations after 0001). It only adds
+# what's missing and never edits a row, so it is safe on every boot; if it fails, the API starts
+# anyway on the network it already has.
+CMD ["sh", "-c", "python -m app.seed --boot; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

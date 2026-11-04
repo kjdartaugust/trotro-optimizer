@@ -2,16 +2,24 @@
 
 The network is a weighted directed graph:
 
-  * Each station has a **hub** node (the street-level point where you walk in/out).
+  * Each station has a **hub** node (where you are after getting off a trotro there) and a
+    **foot** node (where you are after walking there).
   * Each (route, stop) has a **board** node.
   * Edges:
       - ``ride``   : consecutive board nodes on the same route  (fare + minutes)
-      - ``board``  : hub -> board node at that station           (wait/board penalty, +1 transfer)
+      - ``board``  : hub or foot -> board node at that station  (wait/board penalty, the route's
+                     ``board_fare``, +1 transfer)
       - ``alight`` : board node -> hub                           (free)
-      - ``walk``   : hub -> hub within walking radius, and ORIGIN/DEST -> nearby hubs
+      - ``walk``   : hub -> foot of a station within walking radius, ORIGIN -> foot of nearby
+                     stations, and hub -> DEST
 
-Trips are planned by walking from ORIGIN to nearby station hubs, riding/transferring through the
-graph, and walking from a hub to DEST. We run a **lexicographic Dijkstra** over the cost vector
+A walk always ends at a foot node, and the only way on from one is boarding, while the walk to
+DEST starts at a hub, so walks never chain: you walk to your first trotro, between two trotros,
+and from your last one. Stops are a few hundred metres apart, so with chains allowed the cheapest
+"trip" across the city would be a free 12 km walk from stop to stop.
+
+Trips are planned by walking from ORIGIN to nearby stations, riding/transferring through the
+graph, and walking to DEST. We run a **lexicographic Dijkstra** over the cost vector
 ``(transfers, fare, minutes)`` and reorder the comparison key per optimisation mode:
 
   * ``fastest``  -> (minutes, fare, transfers)
@@ -63,6 +71,9 @@ class RouteT:
     name: str
     stops: list[RouteStopT]
     color: str | None = None
+    # Paid once per boarding, wherever you get on: a trotro's minimum fare. The segments'
+    # fare_from_prev come on top, so a leg costs board_fare + the segments ridden.
+    board_fare: float = 0.0
 
 
 @dataclass
@@ -127,6 +138,9 @@ def build_graph(
     def hub(sid: str) -> str:
         return f"hub:{sid}"
 
+    def foot(sid: str) -> str:
+        return f"foot:{sid}"
+
     def bnode(rid: str, seq: int) -> str:
         return f"rs:{rid}:{seq}"
 
@@ -136,20 +150,21 @@ def build_graph(
         for i, st in enumerate(stops):
             b = bnode(r.id, st.seq)
             h = hub(st.station_id)
-            # board: hub -> board node (costs a wait + one transfer)
-            g._edge(
-                h,
-                Edge(
-                    to=b,
-                    minutes=o["board_penalty_min"],
-                    fare=0.0,
-                    transfers=1,
-                    kind="board",
-                    route_id=r.id,
-                    from_station=st.station_id,
-                    to_station=st.station_id,
-                ),
-            )
+            # board: hub or foot -> board node (costs a wait, the boarding fare and one transfer)
+            for frm in (h, foot(st.station_id)):
+                g._edge(
+                    frm,
+                    Edge(
+                        to=b,
+                        minutes=o["board_penalty_min"],
+                        fare=max(r.board_fare, 0.0),
+                        transfers=1,
+                        kind="board",
+                        route_id=r.id,
+                        from_station=st.station_id,
+                        to_station=st.station_id,
+                    ),
+                )
             # alight: board node -> hub (free)
             g._edge(
                 b,
@@ -181,7 +196,7 @@ def build_graph(
                     ),
                 )
 
-    # Walking transfers between nearby station hubs (bidirectional)
+    # Walking transfers between nearby stations, both ways: off a trotro at one, on foot at the other
     slist = list(stations)
     radius = o["walk_radius_m"]
     for i in range(len(slist)):
@@ -194,7 +209,7 @@ def build_graph(
                     g._edge(
                         hub(x.id),
                         Edge(
-                            to=hub(y.id),
+                            to=foot(y.id),
                             minutes=mins,
                             fare=0.0,
                             transfers=0,
@@ -237,15 +252,17 @@ def plan(
     dlat, dlon = dest
 
     origin_edges = [
-        Edge(to=f"hub:{sid}", minutes=mins, fare=0.0, transfers=0, kind="walk",
+        Edge(to=f"foot:{sid}", minutes=mins, fare=0.0, transfers=0, kind="walk",
              to_station=sid, distance_m=d)
         for sid, d, mins in _nearest_hubs(g, olat, olon)
     ]
-    dest_hubs = {f"hub:{sid}": (d, mins) for sid, d, mins in _nearest_hubs(g, dlat, dlon)}
+    # Only from a hub, i.e. straight off a trotro: from a foot node the last walk would be a
+    # second walk in a row (and a trip with no ride at all is just a walk; the UI says so).
+    dest_hubs = {f"hub:{sid}": (sid, d, mins) for sid, d, mins in _nearest_hubs(g, dlat, dlon)}
     if not origin_edges or not dest_hubs:
         return None
 
-    # Dijkstra from virtual ORIGIN. Final walk to DEST is added when a hub is popped.
+    # Dijkstra from virtual ORIGIN. Final walk to DEST is added when a node near DEST is popped.
     start = "ORIGIN"
     adj_origin = {start: origin_edges}
 
@@ -268,12 +285,12 @@ def plan(
         if cur is not None and _order_key(mode, *_as3(cur)) < key:
             continue
 
-        # If this is a hub near the destination, offer a final walk edge to DEST.
+        # If this is a station near the destination, offer a final walk edge to DEST.
         edges = list(neighbours(node))
         if node in dest_hubs:
-            d, wm = dest_hubs[node]
+            sid, d, wm = dest_hubs[node]
             edges = edges + [Edge(to=dest_node, minutes=wm, fare=0.0, transfers=0,
-                                  kind="walk", distance_m=d)]
+                                  kind="walk", from_station=sid, distance_m=d)]
 
         for e in edges:
             ntr = tr + e.transfers
@@ -331,7 +348,7 @@ def _build_itinerary(g: Graph, mode: Mode, path: list[Edge]) -> Itinerary:
             # consume the following ride edges of the same route
             rid = e.route_id
             board_station = e.from_station
-            fare = 0.0
+            fare = e.fare  # the boarding fare
             mins = e.minutes  # includes board penalty
             j = i + 1
             last_station = board_station

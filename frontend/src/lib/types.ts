@@ -24,6 +24,8 @@ export interface ApiRoute {
   verified: boolean;
   confidence: number;
   version: number;
+  /** Charged once per boarding (absent from servers older than the OSM network: 0). */
+  board_fare?: number;
   stops: ApiRouteStop[];
 }
 
@@ -32,6 +34,13 @@ export interface DatasetSnapshot {
   generated_at: string;
   stations: ApiStation[];
   routes: ApiRoute[];
+}
+
+/** `/sync/changes`: rows newer than `since`, and the ones taken out of the network since. */
+export interface ChangeSet extends DatasetSnapshot {
+  since: number;
+  deleted_station_ids?: string[];
+  deleted_route_ids?: string[];
 }
 
 export interface QueuedContribution {

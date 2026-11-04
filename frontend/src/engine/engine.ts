@@ -1,9 +1,12 @@
 /**
  * Offline trotro routing engine — TypeScript port of backend/app/routing/engine.py.
  *
- * MUST stay behaviourally identical to the Python engine: same graph model (hub + board nodes),
- * same edge kinds (walk/board/alight/ride), and the same lexicographic Dijkstra over the cost
- * vector (transfers, fare, minutes) reordered per mode. See engine.test.ts for parity checks.
+ * MUST stay behaviourally identical to the Python engine: same graph model (hub, foot and board
+ * nodes: a walk ends at a foot node, from which you can only board, and the walk to DEST starts at
+ * a hub, so walks never chain), same edge kinds (walk/board/alight/ride), and the same
+ * lexicographic Dijkstra over the cost
+ * vector (transfers, fare, minutes) reordered per mode, with ties popped in push order. See
+ * engine.test.ts and backend/tests/fixtures/parity.json for the parity checks.
  */
 
 export type Mode = "fastest" | "cheapest" | "fewest";
@@ -42,6 +45,8 @@ export interface RouteT {
   name: string;
   color?: string | null;
   stops: RouteStopT[];
+  /** Paid once per boarding, wherever you get on; the segments' fares come on top. */
+  board_fare?: number | null;
 }
 
 interface Edge {
@@ -116,6 +121,7 @@ export function buildGraph(
     else g.adj.set(from, [e]);
   };
   const hub = (sid: string) => `hub:${sid}`;
+  const foot = (sid: string) => `foot:${sid}`;
   const bnode = (rid: string, seq: number) => `rs:${rid}:${seq}`;
 
   for (const r of routes) {
@@ -123,10 +129,13 @@ export function buildGraph(
     stops.forEach((st, i) => {
       const b = bnode(r.id, st.seq);
       const h = hub(st.station_id);
-      push(h, {
-        to: b, minutes: o.boardPenaltyMin, fare: 0, transfers: 1, kind: "board",
-        routeId: r.id, fromStation: st.station_id, toStation: st.station_id, distanceM: 0,
-      });
+      for (const from of [h, foot(st.station_id)]) {
+        push(from, {
+          to: b, minutes: o.boardPenaltyMin, fare: Math.max(r.board_fare ?? 0, 0), transfers: 1,
+          kind: "board",
+          routeId: r.id, fromStation: st.station_id, toStation: st.station_id, distanceM: 0,
+        });
+      }
       push(b, {
         to: h, minutes: 0, fare: 0, transfers: 0, kind: "alight",
         routeId: r.id, fromStation: st.station_id, toStation: st.station_id, distanceM: 0,
@@ -152,7 +161,7 @@ export function buildGraph(
         const mins = d / o.walkSpeedMps / 60;
         for (const [x, y] of [[a, b], [b, a]] as const) {
           push(hub(x.id), {
-            to: hub(y.id), minutes: mins, fare: 0, transfers: 0, kind: "walk",
+            to: foot(y.id), minutes: mins, fare: 0, transfers: 0, kind: "walk",
             fromStation: x.id, toStation: y.id, distanceM: d,
           });
         }
@@ -189,15 +198,25 @@ function nearestHubs(g: Graph, lat: number, lon: number): [string, number, numbe
   return out.slice(0, 8);
 }
 
+type HeapItem = { key: Vec; seq: number; node: string; vec: Vec };
+
+/** Equal keys pop in push order, as Python's heapq does with its (key, counter, …) entries. */
+function itemLess(a: HeapItem, b: HeapItem): boolean {
+  if (keyLess(a.key, b.key)) return true;
+  if (keyLess(b.key, a.key)) return false;
+  return a.seq < b.seq;
+}
+
 /** Minimal binary heap keyed by an ordering vector. */
 class Heap {
-  private a: { key: Vec; node: string; vec: Vec }[] = [];
+  private a: HeapItem[] = [];
+  private pushed = 0;
   push(item: { key: Vec; node: string; vec: Vec }) {
-    this.a.push(item);
+    this.a.push({ ...item, seq: this.pushed++ });
     let i = this.a.length - 1;
     while (i > 0) {
       const p = (i - 1) >> 1;
-      if (keyLess(this.a[i].key, this.a[p].key)) {
+      if (itemLess(this.a[i], this.a[p])) {
         [this.a[i], this.a[p]] = [this.a[p], this.a[i]];
         i = p;
       } else break;
@@ -213,8 +232,8 @@ class Heap {
       for (;;) {
         const l = 2 * i + 1, r = 2 * i + 2;
         let m = i;
-        if (l < n && keyLess(this.a[l].key, this.a[m].key)) m = l;
-        if (r < n && keyLess(this.a[r].key, this.a[m].key)) m = r;
+        if (l < n && itemLess(this.a[l], this.a[m])) m = l;
+        if (r < n && itemLess(this.a[r], this.a[m])) m = r;
         if (m === i) break;
         [this.a[i], this.a[m]] = [this.a[m], this.a[i]];
         i = m;
@@ -237,11 +256,13 @@ export function plan(
   const [dlat, dlon] = dest;
 
   const originEdges: Edge[] = nearestHubs(g, olat, olon).map(([sid, d, mins]) => ({
-    to: `hub:${sid}`, minutes: mins, fare: 0, transfers: 0, kind: "walk",
+    to: `foot:${sid}`, minutes: mins, fare: 0, transfers: 0, kind: "walk",
     toStation: sid, distanceM: d,
   }));
-  const destHubs = new Map<string, [number, number]>(
-    nearestHubs(g, dlat, dlon).map(([sid, d, mins]) => [`hub:${sid}`, [d, mins]])
+  // Only from a hub, i.e. straight off a trotro: from a foot node the last walk would be a
+  // second walk in a row (and a trip with no ride at all is just a walk; the UI says so).
+  const destHubs = new Map<string, [string, number, number]>(
+    nearestHubs(g, dlat, dlon).map(([sid, d, mins]) => [`hub:${sid}`, [sid, d, mins]])
   );
   if (!originEdges.length || destHubs.size === 0) return null;
 
@@ -265,7 +286,10 @@ export function plan(
     const dh = destHubs.get(node);
     if (dh) {
       edges = edges.concat([
-        { to: DEST, minutes: dh[1], fare: 0, transfers: 0, kind: "walk", distanceM: dh[0] },
+        {
+          to: DEST, minutes: dh[2], fare: 0, transfers: 0, kind: "walk",
+          fromStation: dh[0], distanceM: dh[1],
+        },
       ]);
     }
     for (const e of edges) {
@@ -315,7 +339,7 @@ function buildItinerary(g: Graph, mode: Mode, path: Edge[]): Itinerary {
       transfers++;
       const rid = e.routeId!;
       const boardStation = e.fromStation ?? null;
-      let fare = 0, mins = e.minutes, lastStation = boardStation, stops = 0;
+      let fare = e.fare, mins = e.minutes, lastStation = boardStation, stops = 0; // boarding fare
       let j = i + 1;
       while (j < path.length && path[j].kind === "ride" && path[j].routeId === rid) {
         fare += path[j].fare;

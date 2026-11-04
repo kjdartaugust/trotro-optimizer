@@ -13,8 +13,9 @@ from app.routing.engine import (
     plan_all,
 )
 
+# The 17-station demo network: small enough to reason about by hand.
 SEED = json.loads(
-    (Path(__file__).resolve().parents[2] / "seed" / "accra.json").read_text(encoding="utf-8")
+    (Path(__file__).resolve().parents[1] / "seed" / "demo.json").read_text(encoding="utf-8")
 )
 
 
@@ -86,3 +87,33 @@ def test_unreachable_returns_none():
     # A point far out in the ocean, nowhere near a station.
     it = plan(g, (4.0, -2.0), (S["circle"]["lat"], S["circle"]["lon"]), "fastest")
     assert it is None
+
+
+def _line_network():
+    """Five stops 500 m apart in a line, one route through them: board fare 5, then 1 per segment."""
+    ids = ["a", "b", "c", "d", "e"]
+    stations = [StationT(i, i.upper(), 5.6 + k * 0.0045, -0.2) for k, i in enumerate(ids)]
+    route = RouteT(
+        "r", "A → E",
+        [RouteStopT(i, k, 1.0 if k else 0.0, 2.0 if k else 0.0) for k, i in enumerate(ids)],
+        board_fare=5.0,
+    )
+    return build_graph(stations, [route]), (5.6, -0.2), (5.6 + 4 * 0.0045, -0.2)
+
+
+def test_board_fare_paid_once_per_boarding():
+    g, a, e = _line_network()
+    it = plan(g, a, e, "fastest")
+    rides = [(leg.from_station, leg.to_station, leg.fare) for leg in it.legs if leg.kind == "ride"]
+    assert rides == [("a", "e", 9.0)]
+    assert it.total_fare == 9.0
+
+
+def test_walks_never_chain():
+    """Stops a few hundred metres apart must not add up to a free walk across the city."""
+    g, a, e = _line_network()
+    it = plan(g, a, e, "cheapest")
+    assert [leg.kind for leg in it.legs] == ["walk", "ride", "walk"]
+    ride = next(leg for leg in it.legs if leg.kind == "ride")
+    assert (ride.from_station, ride.to_station) == ("b", "d")
+    assert it.total_fare == 7.0

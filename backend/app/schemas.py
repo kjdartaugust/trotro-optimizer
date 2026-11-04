@@ -49,6 +49,8 @@ class RouteOut(BaseModel):
     verified: bool
     confidence: float
     version: int
+    # Charged once per boarding; the stops' fare_from_prev add to it.
+    board_fare: float = 0.0
     stops: list[RouteStopOut] = []
 
     class Config:
@@ -149,6 +151,7 @@ class ChangeSet(BaseModel):
     version: int
     stations: list[StationOut]
     routes: list[RouteOut]
+    # Taken out of the network since `since`: drop them.
     deleted_station_ids: list[str] = []
     deleted_route_ids: list[str] = []
 
