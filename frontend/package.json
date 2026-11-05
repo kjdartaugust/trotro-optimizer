@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "snapshot": "node scripts/snapshot.mjs"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
