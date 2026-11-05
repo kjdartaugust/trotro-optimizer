@@ -7,7 +7,7 @@ import {
   type RouteT,
   type StationT,
 } from "@/engine/engine";
-import { allRoutes, allStations, getLastSync } from "./db";
+import { allRoutes, allStations, getGeneration, getVersion } from "./db";
 import type { ApiRoute, ApiStation } from "./types";
 
 export function toEngine(stations: ApiStation[], routes: ApiRoute[]): Graph {
@@ -24,20 +24,25 @@ export function toEngine(stations: ApiStation[], routes: ApiRoute[]): Graph {
   return buildGraph(st, rt);
 }
 
-// The whole network is ~1,750 stations: build its graph once per sync, not per search.
-let cached: { synced: number | null; graph: Graph; unconfirmed: Set<string> } | null = null;
+// The whole network is ~1,750 stations: build its graph once per dataset version, not per search.
+let cached: { key: string; graph: Graph; unconfirmed: Set<string> } | null = null;
 
 async function network() {
-  const synced = await getLastSync();
-  if (!cached || cached.synced !== synced) {
+  const key = `${await getGeneration()}:${await getVersion()}`;
+  if (!cached || cached.key !== key) {
     const [stations, routes] = await Promise.all([allStations(), allRoutes()]);
     cached = {
-      synced,
+      key,
       graph: toEngine(stations, routes),
       unconfirmed: new Set(routes.filter((r) => !r.verified).map((r) => r.id)),
     };
   }
   return cached;
+}
+
+/** Build the graph ahead of the first search. */
+export async function warmUp(): Promise<void> {
+  await network();
 }
 
 /** Plan all three modes against the offline IndexedDB dataset. `estimated` says whether any ride

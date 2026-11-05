@@ -21,6 +21,27 @@ fare and time — built on community data and working fully offline.
   (IndexedDB). Routing works with **zero network**. When back online the client pulls deltas
   (`/sync/changes?since=…`) and pushes queued contributions.
 
+## The app
+
+Built for a phone first, the way Google or Apple Maps works:
+
+- **A real map of Accra, full screen.** OpenFreeMap streets and place names (free, no key),
+  light or dark as the phone is set. All 547 trotro lines are drawn along the roads they drive
+  (`frontend/public/network/shapes.json`, below), faint enough that the busy corridors build up.
+  Tap a line to see its stops, times and fares; tap a road that many share to see them all; tap
+  a stop to start or end a trip there.
+- **Start from anywhere.** Search a stop (offline, as you type), any place in Ghana (Photon,
+  OpenStreetMap's place search, online), "Where I am", or choose a spot on the map. Swap, recent
+  trips, and a link for every trip and line (`/?from=…&to=…`, `/?line=…`) to share on WhatsApp.
+- **Compare at a glance.** Fastest, cheapest and fewest changes side by side (one card when they
+  agree), then step by step: walk here, take the trotro to Nungua, the stops on the way, get off
+  at GBC Second, the fare for each part, "Paid something else?" to report it.
+- **A swipe-up sheet** over the map on phones; a side panel on a laptop.
+- **Fast on a first visit.** The network ships with the app (`public/network/dataset.json`), so
+  it opens in seconds from the CDN instead of waiting up to a minute for the free-tier API to
+  wake; the app then asks the API only for what changed. Trips are planned in a web worker, so
+  the map never stalls.
+
 ## Why Next.js PWA (not Expo)
 
 | Concern | Next.js PWA | Expo / RN |
@@ -51,9 +72,13 @@ trotro-optimizer/
 │   ├── seed/           the network: accra.json (OpenStreetMap), demo.json (17-stop test network)
 │   └── tests/
 ├── frontend/           Next.js 14 PWA (App Router, MapLibre, IndexedDB, offline engine)
+│   ├── public/network/ dataset.json (first-run network snapshot), shapes.json (route lines)
+│   ├── scripts/        snapshot.mjs: refresh dataset.json from the API
 │   └── src/
+│       ├── app/        the map page and the report page
+│       ├── components/ map, sheet, search, trip options and steps, line/stop cards
 │       ├── engine/     TypeScript routing engine (offline, mirrors backend)
-│       └── lib/        sync, db (IndexedDB), api client
+│       └── lib/        sync, db (IndexedDB), api client, planner worker, shapes, places, trips
 ├── docker-compose.yml  Postgres/PostGIS + Redis + backend + frontend
 └── .github/workflows/  CI (lint, test, build)
 ```
@@ -135,13 +160,25 @@ from OpenStreetMap, where Accra's trotro network is mapped as public-transport r
   after stop: with stops a few hundred metres apart, the cheapest trip would otherwise be a free
   walk across the city.
 
-Rebuild it (then regenerate the parity fixture, below):
+**Route lines.** OSM's relations also list the roads each route drives. `app/etl/osm_shapes.py`
+joins them into one line per route (the way FloodWatch Ghana draws the same routes), fills a
+missing piece of road under 2.5 km with OSRM, trims each line to its first and last stop,
+simplifies it to 2 m and writes `frontend/public/network/shapes.json`: 533 of the 547 routes,
+~70 KB gzipped. The other 14 have gaps in their mapped roads, or lines that don't pass their
+stops, and are drawn stop to stop. A trip's ride is cut out of its route's line between the stops
+it boards and leaves at.
+
+Rebuild it all (then regenerate the parity fixture, below):
 
 ```bash
 cd backend
 python -m app.etl.osm_network            # fetches from Overpass, writes seed/accra.json
+python -m app.etl.osm_shapes             # the route lines, frontend/public/network/shapes.json
 python -m tests.parity                   # the trips both engines must agree on
 ```
+
+Once the API serves a rebuilt network, refresh the app's copy: `cd frontend && npm run snapshot`
+(and bump `NETWORK_GENERATION` in `src/lib/sync.ts` if devices must drop what they hold).
 
 **Loading it.** `python -m app.seed` syncs the database to the bundle, and the backend container
 runs it on every boot, so a deploy is all it takes. Ids are stable (from OSM ids), so it never
@@ -247,8 +284,8 @@ See `.env.example` for every variable and `docker-compose.yml` for the local top
 ## Tests
 
 ```bash
-cd backend && pytest              # routing engine + API + trust scoring + the OSM import
-cd frontend && npm test           # engine parity + sync logic
+cd backend && pytest              # routing engine + API + trust scoring + the OSM import + route lines
+cd frontend && npm test           # engine parity, route lines, trip options
 ```
 
 Both engines are held to the same answers on 30 real trips across the network

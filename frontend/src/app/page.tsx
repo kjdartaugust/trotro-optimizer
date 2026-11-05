@@ -2,225 +2,696 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import StationPicker from "@/components/StationPicker";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LineCard, LinesHere, PinCard, StopCard } from "@/components/Cards";
+import { HistoryIcon, LocateIcon, MapTapIcon, SearchIcon, ShareIcon } from "@/components/icons";
+import Options from "@/components/Options";
+import SearchPanel from "@/components/SearchPanel";
+import Sheet, { isDesktop, sheetHeight, type Snap } from "@/components/Sheet";
+import Steps from "@/components/Steps";
+import type { Drawn } from "@/components/TripMap";
+import TripFields from "@/components/TripFields";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
-import { allStations } from "@/lib/db";
-import { haversineM } from "@/engine/engine";
-import { planOffline, type Itinerary, type Mode } from "@/lib/planner";
-import { syncAll } from "@/lib/sync";
-import type { ApiStation } from "@/lib/types";
+import { allRoutes, allStations, hasDataset, outbox } from "@/lib/db";
+import { cedis, metres, minutes, routeColor } from "@/lib/format";
+import {
+  buildNetwork,
+  nearestStations,
+  ridePath,
+  rideSpan,
+  routeLine,
+  stopsOf,
+  type Network,
+} from "@/lib/network";
+import { nameOf } from "@/lib/places";
+import { planTrip, warmPlanner } from "@/lib/plan";
+import { loadShapes, metres as distance, type LngLat } from "@/lib/shapes";
+import { ensureNetwork, flush, pull } from "@/lib/sync";
+import {
+  endParam,
+  options as toOptions,
+  parseEnd,
+  recentEnds,
+  recentTrips,
+  rememberTrip,
+  type End,
+  type Field,
+  type Recent,
+  type TripOption,
+} from "@/lib/trip";
 
-const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
+// MapLibre touches window: client only.
+const TripMap = dynamic(() => import("@/components/TripMap"), {
+  ssr: false,
+  loading: () => <div className="map map-placeholder" />,
+});
 
-const MODES: Mode[] = ["fastest", "cheapest", "fewest"];
-const MODE_LABEL: Record<Mode, string> = {
-  fastest: "Fastest",
-  cheapest: "Cheapest",
-  fewest: "Fewest changes",
-};
+type Panel =
+  | { kind: "home" }
+  | { kind: "search"; field: Field }
+  | { kind: "pick"; field: Field }
+  | { kind: "line"; id: string }
+  | { kind: "lines"; ids: string[] }
+  | { kind: "stop"; id: string }
+  | { kind: "pin"; at: LngLat; name: string | null };
+
+type Result =
+  | { state: "planning" }
+  | { state: "found"; options: TripOption[]; estimated: boolean }
+  | { state: "none"; why: string };
+
+// The planner walks up to 900 m to a stop (engine DEFAULT_OPTS.walkRadiusM).
+const WALK_M = 900;
 
 export default function Home() {
-  const [stations, setStations] = useState<ApiStation[]>([]);
-  const [origin, setOrigin] = useState("");
-  const [dest, setDest] = useState("");
-  const [itineraries, setItineraries] = useState<Partial<Record<Mode, Itinerary>>>({});
-  const [mode, setMode] = useState<Mode>("fastest");
-  const [estimated, setEstimated] = useState(false);
+  const [net, setNet] = useState<Network | null>(null);
+  const [load, setLoad] = useState<"opening" | "first" | "ready" | "error">("opening");
   const [online, setOnline] = useState(true);
-  const [status, setStatus] = useState("Loading offline data…");
-  const [err, setErr] = useState("");
+  const [from, setFrom] = useState<End | null>(null);
+  const [to, setTo] = useState<End | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
+  const [chosen, setChosen] = useState(0);
+  const [panel, setPanel] = useState<Panel>({ kind: "home" });
+  const [snap, setSnap] = useState<Snap>("peek");
+  const [me, setMe] = useState<LngLat | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [fit, setFit] = useState<{ coords: LngLat[]; seq: number } | null>(null);
+  const [focus, setFocus] = useState<{ at: LngLat; zoom?: number; seq: number } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [recent, setRecent] = useState<Recent[]>([]);
+  const ends = useRef({ from, to });
+  ends.current = { from, to };
+  const ticket = useRef(0);
+  const linked = useRef(false);
 
-  const refreshStations = useCallback(async () => {
-    setStations(await allStations());
+  const frame = (coords: LngLat[]) => setFit((f) => ({ coords, seq: (f?.seq ?? 0) + 1 }));
+
+  const refresh = useCallback(async () => {
+    const [stations, routes, shapes] = await Promise.all([allStations(), allRoutes(), loadShapes()]);
+    setNet(buildNetwork(stations, routes, shapes));
   }, []);
+
+  const open = useCallback(async () => {
+    setLoad((await hasDataset()) ? "opening" : "first");
+    try {
+      // Fast: this device's copy, or on a first visit the snapshot from the CDN.
+      await ensureNetwork();
+      await refresh();
+      setLoad("ready");
+      warmPlanner();
+    } catch {
+      setLoad("error");
+      return;
+    }
+    // Then catch up with the API, which can take a minute to wake: nothing waits on it.
+    try {
+      const { changed } = await pull();
+      if (changed) await refresh();
+      if ((await outbox()).length) {
+        if (!loadToken()) await devLogin().catch(() => null);
+        await flush();
+      }
+    } catch {
+      // Offline, or the API is asleep: the network on this device is enough to plan.
+    }
+  }, [refresh]);
 
   useEffect(() => {
     setOnline(isOnline());
+    setRecent(recentTrips());
     const on = () => setOnline(true);
     const off = () => setOnline(false);
     window.addEventListener("online", on);
     window.addEventListener("offline", off);
-
-    (async () => {
-      try {
-        if (!loadToken() && isOnline()) await devLogin().catch(() => null);
-        const res = await syncAll();
-        await refreshStations();
-        setStatus(
-          res.downloaded
-            ? `Synced dataset v${res.version} · ${(await allStations()).length} stations`
-            : `Offline dataset ready (v${res.version})`
-        );
-      } catch {
-        await refreshStations();
-        setStatus("Offline — using locally stored dataset");
-      }
-    })();
-
+    void open();
     return () => {
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
     };
-  }, [refreshStations]);
+  }, [open]);
 
-  async function plan() {
-    setErr("");
-    const o = stations.find((s) => s.id === origin);
-    const d = stations.find((s) => s.id === dest);
-    if (!o || !d) {
-      setErr("Pick both a start and destination station.");
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3200);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // ── Choosing the ends ────────────────────────────────────────────────────────────────────────
+
+  const locate = useCallback((field: Field) => {
+    if (!("geolocation" in navigator)) {
+      setToast("This browser can't share its location.");
       return;
     }
-    const { itineraries, estimated } = await planOffline([o.lat, o.lon], [d.lat, d.lon]);
-    setEstimated(estimated);
-    if (!Object.keys(itineraries).length) {
-      // The planner only offers trips with a trotro in them; two stops this close are a walk.
-      const m = haversineM(o.lat, o.lon, d.lat, d.lon);
-      setErr(
-        m <= 1500
-          ? `These stops are ${Math.round(m / 10) * 10} m apart, about ${Math.max(1, Math.round(m / 75))} min on foot.`
-          : "No trotro route found between these points yet. Add one under Contribute!"
-      );
-      setItineraries({});
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false);
+        const at: LngLat = [pos.coords.longitude, pos.coords.latitude];
+        setMe(at);
+        choose(field, { name: "Where I am", at, kind: "me" });
+      },
+      () => {
+        setLocating(false);
+        setToast("Couldn't get your location. Search a stop or place instead.");
+        setPanel({ kind: "search", field });
+        setSnap("full");
+      },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 }
+    );
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function choose(field: Field, e: End) {
+    if (field === "from") setFrom(e);
+    else setTo(e);
+    const other = field === "from" ? ends.current.to : ends.current.from;
+    if (other) {
+      setPanel({ kind: "home" });
+      setSnap("half");
       return;
     }
-    setItineraries(itineraries);
-    setMode((Object.keys(itineraries)[0] as Mode) ?? "fastest");
+    if (field === "from") {
+      edit("to");
+      return;
+    }
+    // A destination first: start from where you are if the phone already lets us know, else ask.
+    setPanel({ kind: "home" });
+    setSnap("half");
+    const ask = () => edit("from");
+    if (!navigator.permissions?.query) return ask();
+    navigator.permissions
+      .query({ name: "geolocation" as PermissionName })
+      .then((p) => (p.state === "granted" ? locate("from") : ask()))
+      .catch(ask);
   }
 
-  const active = itineraries[mode];
+  function edit(field: Field) {
+    setPanel({ kind: "search", field });
+    setSnap("full");
+  }
+
+  function pickOnMap(field: Field) {
+    setPanel({ kind: "pick", field });
+    setSnap("peek");
+  }
+
+  function swap() {
+    setFrom(to);
+    setTo(from);
+  }
+
+  function clearTrip() {
+    setFrom(null);
+    setTo(null);
+    setResult(null);
+    setPanel({ kind: "home" });
+    setSnap("peek");
+  }
+
+  function openRecent(r: Recent) {
+    setTo(r.to);
+    if (r.from.kind === "me") {
+      setFrom(null);
+      locate("from");
+    } else {
+      setFrom(r.from);
+    }
+    setPanel({ kind: "home" });
+    setSnap("half");
+  }
+
+  // ── Map taps ─────────────────────────────────────────────────────────────────────────────────
+
+  const openLine = useCallback(
+    (id: string) => {
+      setPanel({ kind: "line", id });
+      setSnap("half");
+      if (net) frame(routeLine(net, id));
+    },
+    [net]
+  );
+
+  function tapped(at: LngLat) {
+    if (panel.kind === "pick") {
+      const field = panel.field;
+      choose(field, { name: "Pin on the map", at, kind: "pin" });
+      void nameOf(at).then((name) => {
+        if (!name) return;
+        const named = (e: End | null) => (e && e.at === at ? { ...e, name } : e);
+        if (field === "from") setFrom(named);
+        else setTo(named);
+      });
+      return;
+    }
+    setPanel({ kind: "pin", at, name: null });
+    setSnap("peek");
+    void nameOf(at).then((name) =>
+      setPanel((p) => (p.kind === "pin" && p.at === at ? { ...p, name } : p))
+    );
+  }
+
+  function tappedStop(id: string) {
+    setPanel({ kind: "stop", id });
+    setSnap("half");
+    // Bring it into the part of the map the sheet leaves showing.
+    const s = net?.station.get(id);
+    if (s) setFocus((f) => ({ at: [s.lon, s.lat], seq: (f?.seq ?? 0) + 1 }));
+  }
+
+  function tappedLines(ids: string[]) {
+    if (ids.length === 1) {
+      openLine(ids[0]);
+      return;
+    }
+    setPanel({ kind: "lines", ids });
+    setSnap("half");
+  }
+
+  function closeCard() {
+    setPanel({ kind: "home" });
+    setSnap(from && to ? "half" : "peek");
+  }
+
+  // ── Planning ─────────────────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!net || !from || !to) {
+      setResult(null);
+      return;
+    }
+    const mine = ++ticket.current;
+    setResult({ state: "planning" });
+    const far = [from, to].find((e) => !nearestStations(net, e.at, WALK_M).length);
+    if (far) {
+      setResult({
+        state: "none",
+        why: `There's no trotro stop within a 12-minute walk of ${far.name} yet.`,
+      });
+      return;
+    }
+    planTrip([from.at[1], from.at[0]], [to.at[1], to.at[0]])
+      .then(({ itineraries, estimated }) => {
+        if (mine !== ticket.current) return;
+        const found = toOptions(itineraries);
+        if (!found.length) {
+          const m = distance(from.at, to.at);
+          setResult({
+            state: "none",
+            why:
+              m <= 1500
+                ? `These are ${metres(m)} apart: about ${minutes(m / 75)} on foot.`
+                : "No trotro route found between these yet.",
+          });
+          return;
+        }
+        setResult({ state: "found", options: found, estimated });
+        setChosen(0);
+        rememberTrip(from, to);
+        setRecent(recentTrips());
+      })
+      .catch(() => {
+        if (mine === ticket.current) setResult({ state: "none", why: "Couldn't plan this trip. Try again." });
+      });
+  }, [net, from, to]);
+
+  const option = result?.state === "found" ? result.options[chosen] : null;
+
+  const drawn = useMemo<Drawn | null>(() => {
+    if (!net) return null;
+    if (panel.kind === "line") return lineDrawn(net, panel.id);
+    if (panel.kind === "lines") {
+      // The lines on the road that was tapped, each in its colour: where they all go.
+      return {
+        rides: panel.ids.map((id) => ({ color: routeColor(net.route.get(id)?.color), coords: routeLine(net, id) })),
+        walks: [],
+        points: [],
+      };
+    }
+    if (panel.kind === "stop" || panel.kind === "pin") {
+      const s = panel.kind === "stop" ? net.station.get(panel.id) : null;
+      const at: LngLat | null = panel.kind === "pin" ? panel.at : s ? [s.lon, s.lat] : null;
+      return at ? { rides: [], walks: [], points: [{ at, color: routeColor(null), major: true }] } : null;
+    }
+    if (option && from && to) return tripDrawn(net, option, from, to);
+    return null;
+  }, [net, panel, option, from, to]);
+
+  // Frame each trip as it's found or another option is chosen.
+  useEffect(() => {
+    if (drawn && option && panel.kind === "home") {
+      frame([...drawn.rides.flatMap((r) => r.coords), ...drawn.walks.flat()]);
+    }
+  }, [option]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fly to a lone end while the other is still to come.
+  useEffect(() => {
+    const lone = from && !to ? from : to && !from ? to : null;
+    if (lone) setFocus((f) => ({ at: lone.at, zoom: 14.5, seq: (f?.seq ?? 0) + 1 }));
+  }, [from, to]);
+
+  // ── Links: every trip and line has one, to send on WhatsApp or open again ──────────────────
+
+  useEffect(() => {
+    if (!net || linked.current) return;
+    linked.current = true;
+    const p = new URLSearchParams(window.location.search);
+    const line = p.get("line");
+    if (line && net.route.has(line)) {
+      openLine(line);
+      return;
+    }
+    const f = parseEnd(p.get("from")), t = parseEnd(p.get("to"));
+    if (f) setFrom(f);
+    if (t) setTo(t);
+    if (f && t) setSnap("half");
+  }, [net, openLine]);
+
+  useEffect(() => {
+    if (!linked.current) return;
+    const p = new URLSearchParams();
+    if (panel.kind === "line") p.set("line", panel.id);
+    else {
+      if (from) p.set("from", endParam(from));
+      if (to) p.set("to", endParam(to));
+    }
+    const q = p.toString();
+    window.history.replaceState(null, "", q ? `/?${q}` : "/");
+  }, [from, to, panel]);
+
+  async function share() {
+    if (!option || !from || !to) return;
+    const text = `${from.name} to ${to.name} by trotro: about ${minutes(option.it.totalMinutes)}, ${cedis(option.it.totalFare)}.`;
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "TroTro trip", text, url });
+      } catch {
+        // Closing the share sheet isn't an error worth showing.
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      setToast("Link copied");
+    } catch {
+      setToast("Couldn't copy the link.");
+    }
+  }
+
+  // ── Layout ───────────────────────────────────────────────────────────────────────────────────
+
+  // Keep what's framed clear of the sheet (phone) or the panel (desktop).
+  const padding = isDesktop()
+    ? { top: 96, left: 456, right: 48, bottom: 40 }
+    : { top: 80, left: 20, right: 20, bottom: sheetHeight("half") + 8 };
+
+  const network = useMemo(
+    () => (net ? net.routes.map((r) => ({ id: r.id, coords: routeLine(net, r.id) })) : []),
+    [net]
+  );
+
+  const straight = from && to ? distance(from.at, to.at) : Infinity;
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="brand">
-          <img src="/icon.svg" alt="" />
-          TroTro Optimizer
+    <main className="mapview">
+      <TripMap
+        network={network}
+        stops={net?.stations ?? []}
+        drawn={drawn}
+        from={from?.at ?? null}
+        to={to?.at ?? null}
+        me={me}
+        fit={fit}
+        focus={focus}
+        padding={padding}
+        picking={panel.kind === "pick"}
+        onTap={tapped}
+        onStop={tappedStop}
+        onLines={tappedLines}
+      />
+      {panel.kind === "pick" && (
+        <div className="map-hint" role="status">
+          <MapTapIcon /> Tap where you want to {panel.field === "from" ? "start" : "go"}
         </div>
-        <div className="row" style={{ gap: 8, flex: "0 0 auto" }}>
-          <span className={`pill ${online ? "online" : "offline"}`}>
-            {online ? "● Online" : "● Offline"}
-          </span>
-          <Link href="/contribute" className="pill">
-            + Contribute
-          </Link>
+      )}
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
         </div>
-      </header>
+      )}
 
-      <div className="grid">
-        <section className="card">
-          <h2>Plan a trip</h2>
-          <StationPicker
-            label="From"
-            placeholder="Type a stop, e.g. Circle"
-            stations={stations}
-            value={origin}
-            onChange={setOrigin}
+      <Sheet snap={snap} onSnap={setSnap} label="Plan a trotro trip">
+        {load !== "ready" ? (
+          <Opening state={load} onRetry={open} />
+        ) : panel.kind === "search" ? (
+          <SearchPanel
+            key={panel.field}
+            field={panel.field}
+            net={net}
+            recent={recentEnds()}
+            online={online}
+            onPick={(e) => choose(panel.field, e)}
+            onLocate={() => locate(panel.field)}
+            onMap={() => pickOnMap(panel.field)}
+            onLine={openLine}
+            onBack={closeCard}
           />
-          <StationPicker
-            label="To"
-            placeholder="Type a stop, e.g. Madina"
-            stations={stations}
-            value={dest}
-            onChange={setDest}
+        ) : panel.kind === "pick" ? (
+          <div className="pick-bar rise">
+            <span className="result-icon accent">
+              <MapTapIcon />
+            </span>
+            <p>
+              <strong>Tap the map</strong> where you want to {panel.field === "from" ? "start" : "go"}.
+            </p>
+            <button type="button" className="btn" onClick={() => edit(panel.field)}>
+              Cancel
+            </button>
+          </div>
+        ) : panel.kind === "line" && net ? (
+          <LineCard net={net} id={panel.id} onOpen={openLine} onStop={tappedStop} onClose={closeCard} />
+        ) : panel.kind === "lines" && net ? (
+          <LinesHere net={net} ids={panel.ids} onOpen={openLine} onClose={closeCard} />
+        ) : panel.kind === "stop" && net ? (
+          <StopCard
+            net={net}
+            id={panel.id}
+            onLine={openLine}
+            onStart={(e) => choose("from", e)}
+            onGo={(e) => choose("to", e)}
+            onClose={closeCard}
           />
-
-          <div style={{ height: 12 }} />
-          <button onClick={plan} disabled={!origin || !dest}>
-            Find routes
-          </button>
-          {err && <p className="err">{err}</p>}
-          <p className="notice">{status}</p>
-
-          {Object.keys(itineraries).length > 0 && (
-            <>
-              <div className="modes">
-                {MODES.filter((m) => itineraries[m]).map((m) => (
-                  <div
-                    key={m}
-                    className={`mode-tab ${m === mode ? "active" : ""}`}
-                    onClick={() => setMode(m)}
-                  >
-                    {MODE_LABEL[m]}
-                  </div>
-                ))}
+        ) : panel.kind === "pin" && net ? (
+          <PinCard
+            net={net}
+            at={panel.at}
+            name={panel.name}
+            onStart={(e) => choose("from", e)}
+            onGo={(e) => choose("to", e)}
+            onClose={closeCard}
+          />
+        ) : !from && !to ? (
+          <Welcome
+            net={net}
+            recent={recent}
+            locating={locating}
+            onSearch={() => edit("to")}
+            onGo={(e) => choose("to", e)}
+            onLocate={() => locate("from")}
+            onRecent={openRecent}
+          />
+        ) : (
+          <div className="trip">
+            <TripFields from={from} to={to} onEdit={edit} onSwap={swap} onClear={clearTrip} />
+            {result?.state === "planning" && <Planning />}
+            {result?.state === "none" && <p className="note rise">{result.why}</p>}
+            {result?.state === "found" && net && from && to && option && (
+              <div className="rise">
+                {straight <= 1000 && (
+                  <p className="note">
+                    It&apos;s only {metres(straight)} as the crow flies: about {minutes(straight / 75)} on foot.
+                  </p>
+                )}
+                <Options options={result.options} chosen={chosen} net={net} onChoose={setChosen} />
+                <div className="trip-actions">
+                  <button type="button" className="chip" onClick={share}>
+                    <ShareIcon size={16} /> Share this trip
+                  </button>
+                </div>
+                <Steps
+                  option={option}
+                  net={net}
+                  from={from}
+                  to={to}
+                  estimated={result.estimated}
+                  onLine={openLine}
+                />
               </div>
-              {active && <ItineraryView it={active} />}
-              {estimated && (
-                <p className="notice">
-                  Fares and times are estimates until riders report real ones: the minimum
-                  trotro fare when you board, plus a little per km.{" "}
-                  <Link href="/contribute">Report a fare</Link>
-                </p>
-              )}
-            </>
-          )}
-        </section>
+            )}
+          </div>
+        )}
+      </Sheet>
+    </main>
+  );
+}
 
-        <section>
-          <MapView stations={stations} itinerary={active} />
-          <p className="notice">
-            {process.env.NEXT_PUBLIC_MAP_STYLE_URL
-              ? "Vector basemap active."
-              : "Schematic map (no basemap tiles) — fully offline. Set NEXT_PUBLIC_MAP_STYLE_URL for a MapLibre basemap."}{" "}
-            Stops and routes ©{" "}
-            <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
-              OpenStreetMap contributors
-            </a>
-            .
-          </p>
-        </section>
+function Opening({ state, onRetry }: { state: "opening" | "first" | "error"; onRetry: () => void }) {
+  if (state === "error") {
+    return (
+      <div className="opening rise">
+        <h1 className="sheet-title">Couldn&apos;t get the routes</h1>
+        <p>
+          The first time, TroTro downloads Accra&apos;s trotro network, about 300 KB. Check your
+          connection and try again.
+        </p>
+        <button type="button" className="btn primary" onClick={onRetry}>
+          Try again
+        </button>
       </div>
+    );
+  }
+  return (
+    <div className="opening">
+      <div className="loader" aria-hidden="true">
+        <span />
+      </div>
+      <h1 className="sheet-title">{state === "first" ? "Getting Accra's trotros ready" : "Opening the map"}</h1>
+      {state === "first" && (
+        <p>547 lines and 1,753 stops, downloaded once. After that, trips plan even with no connection.</p>
+      )}
     </div>
   );
 }
 
-function ItineraryView({ it }: { it: Itinerary }) {
+function Planning() {
   return (
-    <div>
-      <div className="itin-summary">
-        <div className="stat">
-          <div className="n">GHS {it.totalFare.toFixed(2)}</div>
-          <div className="l">Fare</div>
-        </div>
-        <div className="stat">
-          <div className="n">{Math.round(it.totalMinutes)}m</div>
-          <div className="l">Time</div>
-        </div>
-        <div className="stat">
-          <div className="n">{it.transfers}</div>
-          <div className="l">Changes</div>
-        </div>
+    <div className="planning" aria-label="Finding trips">
+      <div className="options n3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="option skeleton" />
+        ))}
       </div>
-      {/* A walk of a few metres is the trip starting or ending right at a stop: nothing to do. */}
-      {it.legs.filter((leg) => leg.kind === "ride" || leg.distanceM >= 25).map((leg, i) => (
-        <div key={i} className={`leg ${leg.kind}`}>
-          <div className="dot" />
-          <div className="body">
-            {leg.kind === "walk" ? (
-              <>
-                <div className="main">Walk {Math.round(leg.distanceM)} m</div>
-                <div className="sub">
-                  {leg.fromName ? `from ${leg.fromName} ` : ""}
-                  {leg.toName ? `to ${leg.toName}` : "to your destination"} ·{" "}
-                  {Math.round(leg.minutes)} min
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="main">
-                  Trotro: {leg.routeName} <span className="fare">GHS {leg.fare.toFixed(2)}</span>
-                </div>
-                <div className="sub">
-                  Board at {leg.fromName}, alight at {leg.toName} · {leg.numStops} stop
-                  {leg.numStops === 1 ? "" : "s"} · {Math.round(leg.minutes)} min
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      ))}
+      <div className="skeleton-line" />
+      <div className="skeleton-line short" />
     </div>
   );
+}
+
+function Welcome({
+  net,
+  recent,
+  locating,
+  onSearch,
+  onGo,
+  onLocate,
+  onRecent,
+}: {
+  net: Network | null;
+  recent: Recent[];
+  locating: boolean;
+  onSearch: () => void;
+  onGo: (e: End) => void;
+  onLocate: () => void;
+  onRecent: (r: Recent) => void;
+}) {
+  return (
+    <div className="welcome">
+      <h1 className="sheet-title">Where to?</h1>
+      <button type="button" className="search-button" onClick={onSearch}>
+        <SearchIcon />
+        <span>Search a stop or any place</span>
+      </button>
+      <div className="chips" role="group" aria-label="Quick picks">
+        <button type="button" className="chip chip-accent" onClick={onLocate} disabled={locating}>
+          <LocateIcon size={16} />
+          {locating ? "Finding you…" : "From where I am"}
+        </button>
+        {(net?.busiest ?? []).slice(0, 6).map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className="chip"
+            onClick={() => onGo({ name: s.name, detail: s.town ?? undefined, at: [s.lon, s.lat], stop: s.id, kind: "stop" })}
+          >
+            {s.name}
+          </button>
+        ))}
+      </div>
+      {recent.length > 0 && (
+        <section className="sheet-section">
+          <h2 className="section-title">Recent trips</h2>
+          <ul className="recent">
+            {recent.map((r) => (
+              <li key={`${r.from.name}>${r.to.name}`}>
+                <button type="button" onClick={() => onRecent(r)}>
+                  <span className="result-icon">
+                    <HistoryIcon />
+                  </span>
+                  <span className="result-text">
+                    <strong>{r.to.name}</strong>
+                    <small>From {r.from.name}</small>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {net && (
+        <p className="fine">
+          {net.routes.length} trotro lines and {net.stations.length.toLocaleString("en-GB")} stops across Accra.
+          Trips plan on your phone, even offline. Tap any line on the map to see its stops and fares.
+          Stops and routes ©{" "}
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+            OpenStreetMap contributors
+          </a>
+          . <Link href="/contribute">Report a fare or a stop</Link>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A trip on the map: rides along their roads in their colours, walks dotted, stops marked. */
+function tripDrawn(net: Network, o: TripOption, from: End, to: End): Drawn {
+  const out: Drawn = { rides: [], walks: [], points: [] };
+  const at = (sid: string | null): LngLat | null => {
+    const s = sid ? net.station.get(sid) : undefined;
+    return s ? [s.lon, s.lat] : null;
+  };
+  const legs = o.it.legs;
+  legs.forEach((l, i) => {
+    if (l.kind === "walk") {
+      const a = i === 0 ? from.at : at(l.fromStation);
+      const b = i === legs.length - 1 ? to.at : at(l.toStation);
+      if (a && b && l.distanceM >= 5) out.walks.push([a, b]);
+      return;
+    }
+    const route = net.route.get(l.routeId ?? "");
+    const color = routeColor(route?.color);
+    const span = route ? rideSpan(net, route.id, l.fromStation, l.toStation, l.numStops) : null;
+    const coords = span && route ? ridePath(net, route.id, span[0], span[1]) : [at(l.fromStation), at(l.toStation)].filter((p): p is LngLat => !!p);
+    out.rides.push({ color, coords });
+    for (const sid of [l.fromStation, l.toStation]) {
+      const p = at(sid);
+      if (p) out.points.push({ at: p, color, major: true });
+    }
+  });
+  return out;
+}
+
+/** An open line: its road in its colour, and every stop on it. */
+function lineDrawn(net: Network, id: string): Drawn | null {
+  const route = net.route.get(id);
+  if (!route) return null;
+  const color = routeColor(route.color);
+  return {
+    rides: [{ color, coords: routeLine(net, id) }],
+    walks: [],
+    points: stopsOf(net, id).map((s, i, all) => ({
+      at: [s.lon, s.lat] as LngLat,
+      color,
+      major: i === 0 || i === all.length - 1,
+    })),
+  };
 }
