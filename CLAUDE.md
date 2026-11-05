@@ -19,6 +19,7 @@ uvicorn app.main:app --reload        # API on :8000, docs at /docs
 python -m app.seed                   # sync the DB's network to seed/accra.json (safe to repeat)
 python -m app.seed --reset --file seed/demo.json   # dev: the 17-station demo network instead
 python -m app.etl.osm_network        # rebuild seed/accra.json from OpenStreetMap (Overpass)
+python -m app.etl.osm_shapes         # rebuild the map's route lines (frontend/public/network/shapes.json)
 python -m tests.parity               # regenerate tests/fixtures/parity.json after either of these
 pytest                               # all tests (test_seed needs Postgres; skipped without)
 pytest tests/test_engine.py -k plan  # single test / filter
@@ -28,8 +29,9 @@ Frontend (from `frontend/`):
 ```bash
 npm install
 npm run dev                          # app on :3000
-npm test                             # engine-parity + sync tests (vitest)
+npm test                             # engine parity, route lines, trip options (vitest)
 npm run build
+npm run snapshot                     # refresh public/network/dataset.json from the live API
 ```
 
 Full stack: `docker compose up --build` (Postgres/PostGIS + Redis + backend + frontend), then
@@ -89,6 +91,25 @@ inside the Docker build context (`./backend`); the repo root is not.
 `users` row (upserted) carrying `trust_score` + `role`. With `DEV_AUTH=true`, `POST /auth/token`
 mints tokens so the flow is testable without a Supabase project. `require_moderator` gates
 moderation endpoints.
+
+**The app (frontend).** One map page (`app/page.tsx`): `TripMap` (MapLibre over OpenFreeMap
+styles; the network, stops and the open trip/line as GeoJSON layers under the place labels), a
+`Sheet` (drag-up on phones, side panel ≥900px), and what's in it: `SearchPanel`, `TripFields`,
+`Options`, `Steps`, `Cards` (line, lines-on-a-road, stop, dropped pin). `lib/network.ts` builds
+the lookups the screens need once per sync; `lib/trip.ts` merges modes that agree and keeps
+recents/links. Planning runs in `lib/plan.worker.ts` (`lib/plan.ts` falls back to the main
+thread). The map's padding is set on the map (`setPadding`), never per `flyTo`/`fitBounds`:
+MapLibre adds a move's padding to the map's, and mixing them left no room to frame a trip.
+
+**Route lines.** `app/etl/osm_shapes.py` writes one encoded polyline per route id to
+`frontend/public/network/shapes.json`; `lib/shapes.ts` decodes it and cuts rides out with
+`matchStops`, which mirrors `match_stops` in the ETL (stops placed on the line in order). A route
+without a line is drawn stop to stop. Rebuild after `osm_network`.
+
+**First visit.** `ensureNetwork` (sync.ts) loads `public/network/dataset.json`, the API's
+`/sync/dataset` saved by `npm run snapshot`, from the CDN; `pull` then asks the API for changes
+since its version. Excluded from the PWA precache (it lives in IndexedDB after the first visit).
+Refresh it whenever the API's network is rebuilt.
 
 ## Conventions
 

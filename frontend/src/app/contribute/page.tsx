@@ -2,132 +2,193 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { CheckIcon, LocateIcon } from "@/components/icons";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
 import { submitContribution } from "@/lib/contribute";
 import { allRoutes, allStations } from "@/lib/db";
+import { cedis, routeColor } from "@/lib/format";
+import { fold } from "@/lib/search";
+import { ensureNetwork } from "@/lib/sync";
 import type { ApiRoute, ApiStation } from "@/lib/types";
 
 type Tab = "fare" | "station";
+
+const sent = (pushed: boolean) =>
+  pushed ? "Thanks! Your report is in." : "Saved on this phone. It goes in when you're back online.";
 
 export default function Contribute() {
   const [tab, setTab] = useState<Tab>("fare");
   const [stations, setStations] = useState<ApiStation[]>([]);
   const [routes, setRoutes] = useState<ApiRoute[]>([]);
+  const [first, setFirst] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
+    // A link from a trip ("Paid something else?") names the route.
+    setFirst(new URLSearchParams(window.location.search).get("route"));
     (async () => {
-      if (!loadToken() && isOnline()) await devLogin().catch(() => null);
+      await ensureNetwork().catch(() => null);
       setStations(await allStations());
       setRoutes(await allRoutes());
+      if (!loadToken() && isOnline()) await devLogin().catch(() => null);
     })();
   }, []);
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="brand">
-          <img src="/icon.svg" alt="" /> Contribute
-        </div>
-        <Link href="/" className="pill">
-          ← Back to planner
-        </Link>
-      </header>
+    <main className="page">
+      <div className="page-inner">
+        <h1>Help other riders</h1>
+        <p className="lede">
+          The fares here are estimates until riders like you report what they really paid. Reports
+          are saved on your phone and sent when you&apos;re online; trusted ones change the app
+          straight away, the rest after a check.
+        </p>
 
-      <p className="notice">
-        Corrections are queued locally and sync when you&apos;re online. Trusted reports auto-apply;
-        others go to the moderation queue.
-      </p>
+        <div className="segmented" role="group" aria-label="What to report">
+          <button type="button" aria-pressed={tab === "fare"} onClick={() => setTab("fare")}>
+            A fare
+          </button>
+          <button type="button" aria-pressed={tab === "station"} onClick={() => setTab("station")}>
+            A missing stop
+          </button>
+        </div>
 
-      <div className="modes" style={{ maxWidth: 420 }}>
-        <div className={`mode-tab ${tab === "fare" ? "active" : ""}`} onClick={() => setTab("fare")}>
-          Report a fare
-        </div>
-        <div
-          className={`mode-tab ${tab === "station" ? "active" : ""}`}
-          onClick={() => setTab("station")}
-        >
-          Add a station
-        </div>
+        {msg && (
+          <p className="done rise" role="status">
+            <CheckIcon /> {msg}
+          </p>
+        )}
+
+        {tab === "fare" ? (
+          <FareForm key={first ?? ""} routes={routes} stations={stations} first={first} onDone={setMsg} />
+        ) : (
+          <StationForm onDone={setMsg} />
+        )}
+
+        <p className="fine">
+          <Link href="/">Back to planning a trip</Link>
+        </p>
       </div>
-
-      {msg && <p className="notice" style={{ color: "var(--ok)" }}>{msg}</p>}
-
-      {tab === "fare" ? (
-        <FareForm routes={routes} stations={stations} onDone={setMsg} />
-      ) : (
-        <StationForm onDone={setMsg} />
-      )}
-    </div>
+    </main>
   );
 }
 
 function FareForm({
   routes,
   stations,
+  first,
   onDone,
 }: {
   routes: ApiRoute[];
   stations: ApiStation[];
+  first: string | null;
   onDone: (m: string) => void;
 }) {
-  const [routeId, setRouteId] = useState("");
+  const [routeId, setRouteId] = useState(first ?? "");
+  const [q, setQ] = useState("");
   const [seq, setSeq] = useState("");
   const [fare, setFare] = useState("");
   const route = useMemo(() => routes.find((r) => r.id === routeId), [routes, routeId]);
-  // ~550 routes: alphabetical, so "Circle → …" are together.
-  const sorted = useMemo(() => [...routes].sort((a, b) => a.name.localeCompare(b.name)), [routes]);
   const stationName = useMemo(() => new Map(stations.map((s) => [s.id, s.name])), [stations]);
+  const stops = useMemo(() => (route ? [...route.stops].sort((a, b) => a.seq - b.seq) : []), [route]);
+  // ~550 routes: search them by name rather than scroll a list.
+  const matches = useMemo(() => {
+    const t = fold(q.trim());
+    if (!t) return [];
+    return routes
+      .filter((r) => fold(r.name).includes(t))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 8);
+  }, [routes, q]);
 
   async function submit() {
     if (!routeId || seq === "" || fare === "") return;
-    const res = await submitContribution("fare", routeId, {
-      seq: Number(seq),
-      fare: Number(fare),
-    });
-    onDone(res.pushed ? "Fare report submitted ✓" : "Saved offline — will sync when online ✓");
+    const res = await submitContribution("fare", routeId, { seq: Number(seq), fare: Number(fare) });
+    onDone(sent(res.pushed));
     setFare("");
   }
 
   return (
-    <section className="card" style={{ maxWidth: 480 }}>
-      <h2>Report a fare change</h2>
-      <label>Route</label>
-      <select value={routeId} onChange={(e) => setRouteId(e.target.value)}>
-        <option value="">Select route…</option>
-        {sorted.map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.name}
+    <section className="form-card rise">
+      <h2>Report a fare</h2>
+      <p className="field-hint">For one stretch of a trotro line: from one stop to the next.</p>
+
+      <label className="field-label" htmlFor="route-q">
+        Which trotro line?
+      </label>
+      {route ? (
+        <div className="picked">
+          <span className="line-dot" style={{ background: routeColor(route.color) }} />
+          <strong>{route.name}</strong>
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => {
+              setRouteId("");
+              setSeq("");
+            }}
+          >
+            Change
+          </button>
+        </div>
+      ) : (
+        <>
+          <input
+            id="route-q"
+            className="input"
+            type="search"
+            autoComplete="off"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Type where it goes, e.g. Madina"
+          />
+          {matches.length > 0 && (
+            <ul className="line-list">
+              {matches.map((r) => (
+                <li key={r.id}>
+                  <button type="button" onClick={() => setRouteId(r.id)}>
+                    <span className="line-dot" style={{ background: routeColor(r.color) }} />
+                    <span className="ll-name">{r.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      <label className="field-label" htmlFor="seq">
+        Between which stops?
+      </label>
+      <select id="seq" className="select" value={seq} onChange={(e) => setSeq(e.target.value)} disabled={!route}>
+        <option value="">{route ? "Choose a stretch…" : "Choose the line first"}</option>
+        {stops.slice(1).map((s, i) => (
+          <option key={s.seq} value={s.seq}>
+            {stationName.get(stops[i].station_id) ?? "Stop"} to {stationName.get(s.station_id) ?? `stop ${s.seq}`} (now{" "}
+            {cedis(Number(s.fare_from_prev))})
           </option>
         ))}
       </select>
 
-      <label>Segment (arriving at stop)</label>
-      <select value={seq} onChange={(e) => setSeq(e.target.value)} disabled={!route}>
-        <option value="">Select stop…</option>
-        {route?.stops
-          .filter((s) => s.seq > 0)
-          .map((s) => (
-            <option key={s.seq} value={s.seq}>
-              {stationName.get(s.station_id) ?? `Stop #${s.seq}`} (current GHS{" "}
-              {Number(s.fare_from_prev).toFixed(2)})
-            </option>
-          ))}
-      </select>
-
-      <label>New fare (GHS)</label>
+      <label className="field-label" htmlFor="fare">
+        What you paid for that stretch (GH₵)
+      </label>
       <input
+        id="fare"
+        className="input"
         type="number"
+        inputMode="decimal"
         step="0.5"
         min="0"
         value={fare}
         onChange={(e) => setFare(e.target.value)}
         placeholder="e.g. 3.00"
       />
-      <div style={{ height: 12 }} />
-      <button onClick={submit} disabled={!routeId || seq === "" || fare === ""}>
-        Submit fare report
-      </button>
+      <div className="form-actions">
+        <button type="button" className="btn primary" onClick={submit} disabled={!routeId || seq === "" || fare === ""}>
+          Send the fare
+        </button>
+      </div>
     </section>
   );
 }
@@ -137,12 +198,20 @@ function StationForm({ onDone }: { onDone: (m: string) => void }) {
   const [town, setTown] = useState("");
   const [lat, setLat] = useState("");
   const [lon, setLon] = useState("");
+  const [finding, setFinding] = useState(false);
 
   function useMyLocation() {
-    navigator.geolocation?.getCurrentPosition((p) => {
-      setLat(p.coords.latitude.toFixed(6));
-      setLon(p.coords.longitude.toFixed(6));
-    });
+    if (!navigator.geolocation) return;
+    setFinding(true);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        setFinding(false);
+        setLat(p.coords.latitude.toFixed(6));
+        setLon(p.coords.longitude.toFixed(6));
+      },
+      () => setFinding(false),
+      { enableHighAccuracy: true, timeout: 10_000 }
+    );
   }
 
   async function submit() {
@@ -153,36 +222,59 @@ function StationForm({ onDone }: { onDone: (m: string) => void }) {
       lat: Number(lat),
       lon: Number(lon),
     });
-    onDone(res.pushed ? "Station submitted ✓" : "Saved offline — will sync when online ✓");
+    onDone(sent(res.pushed));
     setName("");
     setTown("");
   }
 
   return (
-    <section className="card" style={{ maxWidth: 480 }}>
-      <h2>Add a trotro station</h2>
-      <label>Station name</label>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ashaiman Terminal" />
-      <label>Town</label>
-      <input value={town} onChange={(e) => setTown(e.target.value)} placeholder="e.g. Ashaiman" />
-      <div className="row">
+    <section className="form-card rise">
+      <h2>Add a missing stop</h2>
+      <p className="field-hint">Easiest while you&apos;re standing at it: use your location.</p>
+      <label className="field-label" htmlFor="st-name">
+        What do people call it?
+      </label>
+      <input
+        id="st-name"
+        className="input"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="e.g. Ashaiman Terminal"
+      />
+      <label className="field-label" htmlFor="st-town">
+        Area
+      </label>
+      <input
+        id="st-town"
+        className="input"
+        value={town}
+        onChange={(e) => setTown(e.target.value)}
+        placeholder="e.g. Ashaiman"
+      />
+      <div className="form-actions">
+        <button type="button" className="btn" onClick={useMyLocation} disabled={finding}>
+          <LocateIcon /> {finding ? "Finding you…" : lat ? "Location set. Again?" : "Use my location"}
+        </button>
+      </div>
+      <div className="form-row">
         <div>
-          <label>Latitude</label>
-          <input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="5.6900" />
+          <label className="field-label" htmlFor="st-lat">
+            Latitude
+          </label>
+          <input id="st-lat" className="input" inputMode="decimal" value={lat} onChange={(e) => setLat(e.target.value)} placeholder="5.6900" />
         </div>
         <div>
-          <label>Longitude</label>
-          <input value={lon} onChange={(e) => setLon(e.target.value)} placeholder="-0.0300" />
+          <label className="field-label" htmlFor="st-lon">
+            Longitude
+          </label>
+          <input id="st-lon" className="input" inputMode="decimal" value={lon} onChange={(e) => setLon(e.target.value)} placeholder="-0.0300" />
         </div>
       </div>
-      <div style={{ height: 8 }} />
-      <button className="secondary" onClick={useMyLocation} type="button">
-        📍 Use my location
-      </button>
-      <div style={{ height: 8 }} />
-      <button onClick={submit} disabled={!name || !lat || !lon}>
-        Submit station
-      </button>
+      <div className="form-actions">
+        <button type="button" className="btn primary" onClick={submit} disabled={!name || !lat || !lon}>
+          Send the stop
+        </button>
+      </div>
     </section>
   );
 }
