@@ -34,6 +34,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from .database import SessionLocal, engine
+from .ids import route_uuid, station_uuid
 from .loader import dataset_version
 from .models import Base, RetiredRow, Route, RouteStop, Station, User
 
@@ -43,21 +44,10 @@ BACKEND = Path(__file__).resolve().parents[1]
 SEED_FILE = BACKEND / "seed" / "accra.json"
 MIGRATIONS = BACKEND / "migrations"
 
-# Fixed for good: changing it would give every seeded row a new id.
-NAMESPACE = uuid.UUID("2b3f6c1e-8d4a-5f70-9e2b-4c6d8a0f1e35")
-
 # The OSM network's stops are where OSM's mappers put them; its fares are estimates. Neither has
 # been confirmed by riders yet, which is what `verified` and a high confidence mean.
 STATION_CONFIDENCE = 0.6
 ROUTE_CONFIDENCE = 0.5
-
-
-def station_uuid(slug: str) -> str:
-    return str(uuid.uuid5(NAMESPACE, f"station:{slug}"))
-
-
-def route_uuid(key: str) -> str:
-    return str(uuid.uuid5(NAMESPACE, f"route:{key}"))
 
 
 def _statements(sql: str) -> list[str]:
