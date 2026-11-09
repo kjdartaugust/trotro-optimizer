@@ -248,6 +248,22 @@ def tidy(name: str) -> str:
     return re.sub(r"\s+", " ", name).strip()
 
 
+PHONE = re.compile(r"\+?\d[\d\s/().-]{6,}\d")
+LONG_NAME = 60  # longer is usually an advert pasted into the name ("... - Door 2 door shipping")
+
+
+def clean_name(name: str) -> str:
+    """A place's name without phone numbers, and cut at its first break when it runs on."""
+    name = tidy(PHONE.sub(" ", name)).strip(" -,.|/:")
+    if len(name) > LONG_NAME:
+        for sep in (" - ", " | ", ". ", ", ", ": "):
+            head = name.split(sep)[0].strip()
+            if 3 <= len(head) < len(name):
+                name = head
+                break
+    return tidy(name)
+
+
 def area(stations: list[dict]) -> tuple[float, float, float, float]:
     lats = [s["lat"] for s in stations]
     lons = [s["lon"] for s in stations]
@@ -359,7 +375,7 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
     keep = []
     for row in rows:
         conf = float(row.get("confidence") or 0)
-        name = tidy((row.get("names") or {}).get("primary") or "")
+        name = clean_name((row.get("names") or {}).get("primary") or "")
         status = row.get("operating_status")
         at = point(row.get("geometry"))
         if at is None and row.get("bbox"):
