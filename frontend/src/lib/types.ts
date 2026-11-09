@@ -45,7 +45,7 @@ export interface ChangeSet extends DatasetSnapshot {
 
 export interface QueuedContribution {
   client_key: string;
-  kind: "station" | "route" | "fare";
+  kind: "station" | "route" | "fare" | "fareboard";
   target_id: string | null;
   payload: Record<string, unknown>;
   note?: string;

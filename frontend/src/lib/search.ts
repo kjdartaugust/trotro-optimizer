@@ -10,12 +10,23 @@ export function fold(s: string): string {
   return s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 }
 
-/** 0: the name starts with the query, 1: a word in it does, 2: it's somewhere in it. */
+/** Letters and digits only, each run of a doubled letter once: "Zoom lion" and "Zoomlion",
+ *  "Trassaco" and "Trasacco", "Korle-Bu" and "Korle Bu" all come out the same. */
+export function squash(s: string): string {
+  return fold(s)
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .replace(/(.)\1+/gu, "$1");
+}
+
+/** 0: the name starts with the query, 1: a word in it does, 2: it's somewhere in it, 3: it is
+ *  once spaces and doubled letters are set aside. */
 function rank(name: string, q: string, extra = ""): number {
   const n = fold(name);
   if (n.startsWith(q)) return 0;
   if (n.split(/[\s\-/(→]+/).some((w) => w.startsWith(q))) return 1;
   if (n.includes(q) || fold(extra).includes(q)) return 2;
+  const sq = squash(q);
+  if (sq.length >= 3 && squash(name).includes(sq)) return 3;
   return -1;
 }
 

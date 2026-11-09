@@ -53,8 +53,14 @@ and is mirrored in TS.
 ORIGIN→foot), a foot node can only board, and the final walk to DEST starts at a hub. With the
 real network's stops 50–500 m apart, chained walks made "cheapest" a free 12 km walk.
 
+**Access walks.** ORIGIN/DEST connect to the 8 nearest stations within `walk_radius_m` (900 m);
+when none is that close, to the 8 nearest within `access_radius_m` (3 km), so places just past
+900 m from a mapped stop (much of Accra) still get a trip (`_nearest_hubs` / `nearestHubs`). The
+UI (`app/page.tsx`) names the nearest stop beyond 3 km and offers to start or end there.
+
 **Parity is tested on the real network**: `backend/tests/fixtures/parity.json` is the Python
-engine's answers to 30 trips over `seed/accra.json`; `test_parity.py` and `engine.test.ts` hold
+engine's answers to 30 station-to-station trips over `seed/accra.json` plus `FAR_TRIPS` (real
+places beyond 900 m of a stop, one beyond 3 km); `test_parity.py` and `engine.test.ts` hold
 both engines to it. Regenerate it (`python -m tests.parity`) after rebuilding the seed or changing
 routing on purpose, then port the change.
 
@@ -70,6 +76,17 @@ dataclasses and memoises the built `Graph` per-process, keyed by `dataset_versio
 tables and bumps `version`); otherwise it waits in the moderation queue. Approvals raise the
 reporter's `trust_score`, rejections lower it. `apply_contribution` is the **only** path that edits
 canonical station/route data.
+
+**Fare boards.** A `fareboard` contribution is a station's posted list: payload `station_id` +
+`rows` of `{to, fare, to_station_id|null}` (checked in `schemas.ContributionCreate`). On approval
+`fares.apply_fareboard` runs `fit_route` on every route through the station: the segments after it
+are set so boarding there and alighting at each listed stop costs exactly that fare (difference
+shared by the old per-segment weights; a fare cheaper than an earlier one is skipped; `board_fare`
+only ever lowered). Rows with no `to_station_id` are lines the network lacks, kept as leads. Photos
+are read by `fareboard.read_board` with whichever OpenAI-compatible vision model the host sets
+(`VISION_BASE_URL/MODEL/API_KEY`, then `VISION_FALLBACKS`; none is assumed, keys only from env)
+and never stored; `routers/fareboards.py` caps reads per address/hour and per day. Frontend:
+`components/FareBoardForm.tsx`, `lib/fareboard.ts` (`shrink`, `reachable`, `matchDestination`).
 
 **Sync model.** Every row has a monotonic `version` (see `TimestampMixin`). `/sync/dataset` returns
 a full snapshot to seed a device; `/sync/changes?since=<cursor>` returns rows with `version >
@@ -100,6 +117,12 @@ the lookups the screens need once per sync; `lib/trip.ts` merges modes that agre
 recents/links. Planning runs in `lib/plan.worker.ts` (`lib/plan.ts` falls back to the main
 thread). The map's padding is set on the map (`setPadding`), never per `flyTo`/`fitBounds`:
 MapLibre adds a move's padding to the map's, and mixing them left no room to frame a trip.
+
+**Place search** (`lib/places.ts`): Photon results kept to `Network.area` (the stops' bounds +
+~10 km), ranked by name match (`nameMatch`: spaces/doubled letters ignored via `search.squash`)
+then distance from the rider (`me`: only read silently when geolocation is already granted) or
+else the map's centre (`TripMap onMoved`). Never from a fixed point. No hits with a space in the
+query: retried without spaces ("Zoom lion").
 
 **Route lines.** `app/etl/osm_shapes.py` writes one encoded polyline per route id to
 `frontend/public/network/shapes.json`; `lib/shapes.ts` decodes it and cuts rides out with

@@ -2,30 +2,37 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import FareBoardForm from "@/components/FareBoardForm";
 import { CheckIcon, LocateIcon } from "@/components/icons";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
 import { submitContribution } from "@/lib/contribute";
 import { allRoutes, allStations } from "@/lib/db";
 import { cedis, routeColor } from "@/lib/format";
+import { buildNetwork } from "@/lib/network";
 import { fold } from "@/lib/search";
 import { ensureNetwork } from "@/lib/sync";
 import type { ApiRoute, ApiStation } from "@/lib/types";
 
-type Tab = "fare" | "station";
+type Tab = "board" | "fare" | "station";
 
 const sent = (pushed: boolean) =>
   pushed ? "Thanks! Your report is in." : "Saved on this phone. It goes in when you're back online.";
 
 export default function Contribute() {
-  const [tab, setTab] = useState<Tab>("fare");
+  const [tab, setTab] = useState<Tab>("board");
   const [stations, setStations] = useState<ApiStation[]>([]);
   const [routes, setRoutes] = useState<ApiRoute[]>([]);
   const [first, setFirst] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
+  const net = useMemo(() => (stations.length ? buildNetwork(stations, routes, new Map()) : null), [stations, routes]);
 
   useEffect(() => {
-    // A link from a trip ("Paid something else?") names the route.
-    setFirst(new URLSearchParams(window.location.search).get("route"));
+    // A link from a trip ("Paid something else?") names the route; others can name the tab.
+    const p = new URLSearchParams(window.location.search);
+    const route = p.get("route"), t = p.get("tab");
+    setFirst(route);
+    if (route) setTab("fare");
+    else if (t === "board" || t === "fare" || t === "station") setTab(t);
     (async () => {
       await ensureNetwork().catch(() => null);
       setStations(await allStations());
@@ -45,6 +52,9 @@ export default function Contribute() {
         </p>
 
         <div className="segmented" role="group" aria-label="What to report">
+          <button type="button" aria-pressed={tab === "board"} onClick={() => setTab("board")}>
+            A fare board
+          </button>
           <button type="button" aria-pressed={tab === "fare"} onClick={() => setTab("fare")}>
             A fare
           </button>
@@ -59,7 +69,9 @@ export default function Contribute() {
           </p>
         )}
 
-        {tab === "fare" ? (
+        {tab === "board" ? (
+          <FareBoardForm net={net} onDone={setMsg} />
+        ) : tab === "fare" ? (
           <FareForm key={first ?? ""} routes={routes} stations={stations} first={first} onDone={setMsg} />
         ) : (
           <StationForm onDone={setMsg} />

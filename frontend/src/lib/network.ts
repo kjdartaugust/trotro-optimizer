@@ -19,6 +19,24 @@ export interface Network {
   /** Each route's line along its roads (most routes have one). */
   shapes: Map<string, LngLat[]>;
   placed: Map<string, OnLine[]>;
+  /** The area the stops cover and ~10 km around: [west, south, east, north]. Place search keeps
+   *  to it, since a place outside can't be reached by trotro. */
+  area: [number, number, number, number] | null;
+}
+
+/** About 10 km of latitude or longitude, near the equator. */
+const MARGIN = 0.09;
+
+function areaOf(stations: ApiStation[]): Network["area"] {
+  if (!stations.length) return null;
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  for (const st of stations) {
+    w = Math.min(w, st.lon);
+    e = Math.max(e, st.lon);
+    s = Math.min(s, st.lat);
+    n = Math.max(n, st.lat);
+  }
+  return [w - MARGIN, s - MARGIN, e + MARGIN, n + MARGIN];
 }
 
 /** "Shalom → Kaneshie" → ["Shalom", "Kaneshie"]. */
@@ -76,6 +94,7 @@ export function buildNetwork(
     busiest,
     shapes,
     placed: new Map(),
+    area: areaOf(stations),
   };
 }
 

@@ -1,15 +1,18 @@
 "use client";
 
 /**
- * Choosing one end of a trip: a stop (found offline, as you type), any place in Ghana (online),
- * where you are, or a spot on the map. Lines match too, and open their card.
+ * Choosing one end of a trip: a stop (found offline, as you type), any place the trotros reach
+ * (online), where you are, or a spot on the map. Lines match too, and open their card. Places come
+ * nearest first, from where the rider is or else from where the map is looking, with how far
+ * each is when we know where the rider is.
  */
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Network } from "@/lib/network";
 import { searchPlaces, type Place } from "@/lib/places";
 import { findLines, findStops } from "@/lib/search";
+import { metres as distance, type LngLat } from "@/lib/shapes";
 import type { End, Field } from "@/lib/trip";
-import { routeColor } from "@/lib/format";
+import { metres, routeColor } from "@/lib/format";
 import { BackIcon, BusIcon, CloseIcon, HistoryIcon, LocateIcon, MapTapIcon, PinIcon, StopIcon } from "./icons";
 
 type Option =
@@ -23,6 +26,8 @@ export default function SearchPanel({
   net,
   recent,
   online,
+  near,
+  me,
   onPick,
   onLocate,
   onMap,
@@ -33,6 +38,10 @@ export default function SearchPanel({
   net: Network | null;
   recent: End[];
   online: boolean;
+  /** Places nearest this first: where the rider is, or else where the map is looking. */
+  near: LngLat;
+  /** Where the rider is, when we know: each result says how far it is. */
+  me: LngLat | null;
   onPick: (e: End) => void;
   onLocate: () => void;
   onMap: () => void;
@@ -45,6 +54,9 @@ export default function SearchPanel({
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const term = q.trim();
+  // Read when a search starts, not a reason to search again: the map moves under the sheet.
+  const nearby = useRef({ near, area: net?.area ?? null });
+  nearby.current = { near, area: net?.area ?? null };
 
   useEffect(() => {
     // After the sheet has risen, or iOS scrolls the page to the field.
@@ -62,7 +74,7 @@ export default function SearchPanel({
     setStatus("loading");
     // A pause in typing: one request per thought, not per keystroke.
     const t = setTimeout(() => {
-      searchPlaces(term, ctl.signal)
+      searchPlaces(term, nearby.current, ctl.signal)
         .then((found) => {
           setPlaces(found);
           setStatus("idle");
@@ -99,6 +111,8 @@ export default function SearchPanel({
           title: "Trotro lines",
           options: lines.map((r) => ({ kind: "line" as const, id: r.id, name: r.name, color: routeColor(r.color) })),
         },
+        // Not every place has a name on the map yet: any spot can still be a trip's end.
+        { title: "Can't find it?", options: [{ kind: "map" as const }] },
       ]
     : [
         { title: null, options: [{ kind: "me" }, { kind: "map" }] },
@@ -175,6 +189,9 @@ export default function SearchPanel({
         {!net && <li className="results-note">Getting the stops ready…</li>}
         {groups.map((g) => (
           <Fragment key={g.title ?? "first"}>
+            {g.title === "Can't find it?" && net && !stops.length && !places.length && !lines.length && status !== "loading" && (
+              <li className="results-note">Nothing called that yet. Try another spelling.</li>
+            )}
             {g.title && g.options.length > 0 && (
               <li className="results-group" role="presentation">
                 {g.title}
@@ -190,7 +207,7 @@ export default function SearchPanel({
                     onClick={() => choose(o)}
                     onMouseEnter={() => setActive(i)}
                   >
-                    {row(o, field)}
+                    {row(o, field, me)}
                   </button>
                 </li>
               );
@@ -206,9 +223,6 @@ export default function SearchPanel({
             )}
           </Fragment>
         ))}
-        {net && term && flat.length === 0 && status !== "loading" && (
-          <li className="results-note">Nothing called that yet. Try another spelling, or pick on the map.</li>
-        )}
       </ul>
     </div>
   );
@@ -220,7 +234,7 @@ function key(o: Option): string {
   return o.kind;
 }
 
-function row(o: Option, field: Field): ReactNode {
+function row(o: Option, field: Field, me: LngLat | null): ReactNode {
   const body = (icon: ReactNode, title: string, sub?: string, tone?: string) => (
     <>
       <span className={`result-icon ${tone ?? ""}`}>{icon}</span>
@@ -237,6 +251,9 @@ function row(o: Option, field: Field): ReactNode {
   }
   const e = o.end;
   const icon = o.recent ? <HistoryIcon /> : e.kind === "stop" ? <StopIcon /> : e.kind === "place" ? <PinIcon /> : <BusIcon />;
-  const sub = e.kind === "stop" ? (e.detail ? `Trotro stop · ${e.detail}` : "Trotro stop") : e.detail;
-  return body(icon, e.name, sub);
+  const what = e.kind === "stop" ? (e.detail ? `Trotro stop · ${e.detail}` : "Trotro stop") : e.detail;
+  // How far, the way a map app says it, when we know where the rider is.
+  const away = me ? metres(distance(me, e.at)) : null;
+  const sub = [away, what].filter(Boolean).join(" · ");
+  return body(icon, e.name, sub || undefined);
 }

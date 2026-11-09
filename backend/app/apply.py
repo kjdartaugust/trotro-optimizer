@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .fares import apply_fareboard
 from .loader import dataset_version
 from .models import Contribution, Route, RouteStop, Station
 
@@ -82,6 +83,10 @@ async def apply_contribution(db: AsyncSession, contrib: Contribution) -> None:
                     st.version = v
             route.version = v
             route.confidence = max(route.confidence, contrib.confidence)
+
+    elif contrib.kind == "fareboard":
+        # A station's fare board: the fare from that station to each destination it lists.
+        await apply_fareboard(db, contrib, v)
 
 
 def _stop(s: dict) -> dict:

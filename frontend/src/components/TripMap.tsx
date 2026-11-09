@@ -210,6 +210,7 @@ export default function TripMap({
   onTap,
   onStop,
   onLines,
+  onMoved,
 }: {
   /** Every route's line, by id. */
   network: { id: string; coords: LngLat[] }[];
@@ -230,14 +231,16 @@ export default function TripMap({
   onTap: (at: LngLat) => void;
   onStop: (id: string) => void;
   onLines: (ids: string[]) => void;
+  /** Where the map is looking, after each move. */
+  onMoved?: (center: LngLat) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
   const markers = useRef<Partial<Record<"from" | "to" | "me", Marker>>>({});
   const data = useRef({ network, stops, drawn });
   data.current = { network, stops, drawn };
-  const handlers = useRef({ onTap, onStop, onLines, picking });
-  handlers.current = { onTap, onStop, onLines, picking };
+  const handlers = useRef({ onTap, onStop, onLines, onMoved, picking });
+  handlers.current = { onTap, onStop, onLines, onMoved, picking };
   const pad = useRef(padding);
   pad.current = padding;
 
@@ -335,6 +338,10 @@ export default function TripMap({
         }
       }
       h.onTap(at);
+    });
+    m.on("moveend", () => {
+      const c = m.getCenter();
+      handlers.current.onMoved?.([c.lng, c.lat]);
     });
     for (const layer of ["stops", "net-hit"]) {
       m.on("mouseenter", layer, () => (m.getCanvas().style.cursor = "pointer"));

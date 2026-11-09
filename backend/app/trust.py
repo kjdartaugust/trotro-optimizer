@@ -38,7 +38,7 @@ def contribution_confidence(
     reported_at: datetime | None = None,
 ) -> float:
     base = 0.55 * reporter_weight(reporter_trust) + 0.45 * votes_factor(net_weighted_votes)
-    if kind == "fare" and reported_at is not None:
+    if kind in ("fare", "fareboard") and reported_at is not None:
         # Fresh fare reports are trusted more; old ones decay toward needing re-confirmation.
         base *= 0.5 + 0.5 * time_decay(reported_at)
     return round(max(0.0, min(1.0, base)), 4)

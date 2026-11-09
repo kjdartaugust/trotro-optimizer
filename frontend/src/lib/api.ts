@@ -1,3 +1,4 @@
+import type { ReadBoard } from "./fareboard";
 import type { ChangeSet, DatasetSnapshot, QueuedContribution } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -59,6 +60,45 @@ export async function pushOutbox(items: QueuedContribution[]) {
       })),
     }),
   });
+}
+
+/** Whether this server can read fare board photos (a vision model is set up on it). */
+export async function fareboardReader(): Promise<boolean> {
+  try {
+    return (await req<{ reader: boolean }>("/fareboards/status")).reader;
+  } catch {
+    return false;
+  }
+}
+
+/** Why a photo couldn't be read: `status` 503 means no model is set up here (type it in). */
+export class ReadError extends Error {
+  constructor(
+    public status: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+/** Read a fare board photo on the server; the photo isn't kept. */
+export async function readFareBoard(photo: Blob): Promise<ReadBoard> {
+  const body = new FormData();
+  body.append("photo", photo, "board.jpg");
+  const headers = new Headers();
+  const t = loadToken();
+  if (t) headers.set("Authorization", `Bearer ${t}`);
+  const res = await fetch(`${BASE}/fareboards/read`, { method: "POST", body, headers });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = String((await res.json()).detail ?? "");
+    } catch {
+      // Not JSON: a proxy's page. The status says enough.
+    }
+    throw new ReadError(res.status, detail);
+  }
+  return (await res.json()) as ReadBoard;
 }
 
 export function isOnline(): boolean {

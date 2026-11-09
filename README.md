@@ -16,7 +16,8 @@ fare and time — built on community data and working fully offline.
 - **Crowdsourcing** — Users submit and correct routes, fares, and station locations. Fare
   changes (fuel-price driven) propagate through community reports with **trust/verification
   scoring** and a **moderation queue**. Contributions are auto-applied once they cross a
-  confidence threshold; otherwise a moderator reviews them.
+  confidence threshold; otherwise a moderator reviews them. A photo of a station's **fare board**
+  sends every fare on it at once (below).
 - **Offline-first** — The full routing dataset is packaged and downloaded to the device
   (IndexedDB). Routing works with **zero network**. When back online the client pulls deltas
   (`/sync/changes?since=…`) and pushes queued contributions.
@@ -30,9 +31,15 @@ Built for a phone first, the way Google or Apple Maps works:
   (`frontend/public/network/shapes.json`, below), faint enough that the busy corridors build up.
   Tap a line to see its stops, times and fares; tap a road that many share to see them all; tap
   a stop to start or end a trip there.
-- **Start from anywhere.** Search a stop (offline, as you type), any place in Ghana (Photon,
-  OpenStreetMap's place search, online), "Where I am", or choose a spot on the map. Swap, recent
-  trips, and a link for every trip and line (`/?from=…&to=…`, `/?line=…`) to share on WhatsApp.
+- **Start from anywhere.** Search a stop (offline, as you type), any place the trotros reach
+  (Photon, OpenStreetMap's place search, online), "Where I am", or choose a spot on the map. Swap,
+  recent trips, and a link for every trip and line (`/?from=…&to=…`, `/?line=…`) to share on
+  WhatsApp.
+- **Search like a map app.** Places whose name matches come first, then the nearest to you (when
+  the phone already shares your location; the app never asks just to search) or to where the
+  map is looking, each with how far it is and its street. Only places inside the network's area
+  plus ~10 km (a place in Ho can't be reached by an Accra trotro). Spaces and doubled letters
+  don't matter ("Zoom lion", "Trassaco"), and "Can't find it? Choose on the map" is always there.
 - **Compare at a glance.** Fastest, cheapest and fewest changes side by side (one card when they
   agree), then step by step: walk here, take the trotro to Nungua, the stops on the way, get off
   at GBC Second, the fare for each part, "Paid something else?" to report it.
@@ -140,6 +147,8 @@ npm run dev
 | `GET`  | `/sync/dataset` | – | full offline snapshot (versioned) |
 | `GET`  | `/sync/changes?since=` | – | deltas since a version cursor |
 | `POST` | `/sync/push` | user | push queued offline contributions |
+| `GET`  | `/fareboards/status` | – | whether this server can read fare board photos |
+| `POST` | `/fareboards/read` | – | read a fare board photo (multipart `photo`) into rows; not stored |
 
 Full schema at `/docs` (Swagger) and `/openapi.json`.
 
@@ -158,7 +167,11 @@ from OpenStreetMap, where Accra's trotro network is mapped as public-transport r
   route's `board_fare` is charged once per boarding; its stops' `fare_from_prev` add to it.
 - **Walking** is to your first trotro, between two trotros, and from your last one, never stop
   after stop: with stops a few hundred metres apart, the cheapest trip would otherwise be a free
-  walk across the city.
+  walk across the city. Walks are up to 900 m, except the first and last when no stop is that
+  close: then the trip walks to the nearest stops up to 3 km away (`access_radius_m`), since
+  plenty of Accra (Spintex, Weija, Kasoa, Oyarifa...) is just past 900 m from a mapped stop. Such
+  a walk of 1.5 km or more says a taxi may be quicker. Further than 3 km, the app names the
+  nearest stop and its distance, with a button to start or end the trip there.
 
 **Route lines.** OSM's relations also list the roads each route drives. `app/etl/osm_shapes.py`
 joins them into one line per route (the way FloodWatch Ghana draws the same routes), fills a
@@ -188,6 +201,33 @@ their next sync. After that it only adds stations and routes that are missing. I
 row, so riders' fare reports and corrections survive every redeploy.
 
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL.
+
+## Fare boards
+
+Every GPRTU station puts up its own list: the places its trotros go and the fare to each, changed
+when fares change. That list is both the station's current lines and its official fares, so the
+report page leads with it: **A fare board**.
+
+1. **The station.** Search it, or "I'm at the station" (the nearest stop within 400 m).
+2. **The board.** A photo, shrunk on the phone to ~1600 px, is read on the server by a vision model
+   (`backend/app/fareboard.py`) and thrown away; or the rows are typed in. The model's answer is
+   checked row by row: fares between GH¢0.50 and 500 (a phone number isn't a fare), each place
+   once, 80 rows at most.
+3. **The rows.** Each destination is matched to a stop that the station's lines reach after it
+   ("Legon Second: 9 lines from Madina"). One that no line reaches is a trotro the network doesn't
+   have yet: it's sent too, as a lead for mapping it.
+4. **Sent** as a `fareboard` contribution (offline-first, like every report). Once approved,
+   `app/fares.py` sets each route leaving the station so that boarding there and getting off at a
+   listed stop costs exactly the board's fare: the segments in between share the difference the
+   way the estimates did (by distance), and the rest of the route is left alone.
+
+**Which model reads it is the host's choice, none is built in**: anything behind an OpenAI-style
+chat-completions API that can see images (Gemini, OpenRouter, Groq, Mistral, OpenAI, Anthropic, a
+local Ollama...). Set `VISION_BASE_URL`, `VISION_MODEL` and `VISION_API_KEY` on the server (base
+URLs in `.env.example`), and optionally `VISION_FALLBACKS`, tried in order when the first fails.
+Unset, the page skips the photo and riders type the board in. Reads are capped at
+`FAREBOARD_READS_PER_HOUR` per address (20) and `FAREBOARD_READS_PER_DAY` in all (300), to stay
+inside free tiers.
 
 ## Trust & moderation model
 

@@ -81,6 +81,16 @@ describe("boarding fare and walking", () => {
     expect(fast.totalFare).toBe(9);
   });
 
+  it("walks further to the nearest stop when none is within 900 m, up to 3 km", () => {
+    const start: [number, number] = [5.6 - 0.0135, -0.2]; // ~1.5 km south of stop A
+    const it = plan(g, start, E, "fastest")!;
+    expect(it).not.toBeNull();
+    expect(it.legs[0]).toMatchObject({ kind: "walk", toStation: "a" });
+    expect(it.legs[0].distanceM).toBeGreaterThan(1400);
+    expect(it.legs[0].distanceM).toBeLessThan(1600);
+    expect(plan(g, [5.6 - 0.04, -0.2], E, "fastest")).toBeNull(); // ~4.4 km away: too far
+  });
+
   it("walks to a trotro, never stop to stop: cheapest rides b -> d rather than walking 2 km", () => {
     const cheap = plan(g, A, E, "cheapest")!;
     expect(cheap.legs.map((l) => l.kind)).toEqual(["walk", "ride", "walk"]);

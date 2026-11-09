@@ -18,6 +18,18 @@ SEED = BACKEND / "seed" / "accra.json"
 FIXTURE = BACKEND / "tests" / "fixtures" / "parity.json"
 TRIPS = 30
 
+# Places more than a 900 m walk from any stop, to big stations: their trips start or end with the
+# longer walk to the nearest stops (up to 3 km). East Legon Hills is further than that: no plan.
+FAR_TRIPS = [
+    [[5.655626, -0.118578], [5.563862, -0.236642]],  # Islamic University -> Kaneshie
+    [[5.671947, -0.113361], [5.570563, -0.215268]],  # Zoomlion HQ, Nmai Dzorm -> Circle
+    [[5.744103, -0.176489], [5.679147, -0.172678]],  # Oyarifa -> Madina
+    [[5.532573, -0.437491], [5.570563, -0.215268]],  # Kasoa -> Circle
+    [[5.612661, -0.226546], [5.628826, -0.090199]],  # Achimota -> Spintex
+    [[5.5487, -0.200755], [5.625298, -0.057016]],    # Tema Station -> Sakumono
+    [[5.692759, -0.100474], [5.679147, -0.172678]],  # East Legon Hills -> Madina (too far: none)
+]
+
 
 def load_bundle() -> dict:
     return json.loads(SEED.read_text(encoding="utf-8"))
@@ -46,7 +58,7 @@ def trips(bundle: dict) -> list[list[list[float]]]:
     for i in range(TRIPS):
         a, b = st[(i * n) // TRIPS], st[(i * n // TRIPS + n // 2 + 37 * i) % n]
         out.append([[a["lat"], a["lon"]], [b["lat"], b["lon"]]])
-    return out
+    return out + FAR_TRIPS
 
 
 def summary(it: Itinerary) -> dict:

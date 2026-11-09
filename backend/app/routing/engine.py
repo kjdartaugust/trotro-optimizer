@@ -42,6 +42,9 @@ Mode = Literal["fastest", "cheapest", "fewest"]
 # Defaults; overridable per-plan (server passes values from Settings).
 DEFAULTS = {
     "walk_radius_m": 900.0,
+    # When no stop is within walk_radius_m of where a trip starts or ends, walk up to this far to
+    # the nearest ones instead: a long first or last walk beats no trip at all.
+    "access_radius_m": 3000.0,
     "walk_speed_mps": 1.25,
     "board_penalty_min": 4.0,
     "transfer_penalty_min": 3.0,
@@ -231,14 +234,19 @@ def _order_key(mode: Mode, transfers: int, fare: float, minutes: float) -> tuple
 
 
 def _nearest_hubs(g: Graph, lat: float, lon: float) -> list[tuple[str, float, float]]:
-    """Return (station_id, distance_m, walk_minutes) for stations within walk radius."""
+    """(station_id, distance_m, walk_minutes) of the stops a trip can start or end at, nearest
+    first, 8 at most: those within the walk radius, or when none is that close, the nearest within
+    the access radius (a long first or last walk beats no trip)."""
+    walk = g.opts["walk_radius_m"]
+    reach = max(g.opts.get("access_radius_m", walk), walk)
     out = []
     for s in g.stations.values():
         d = haversine_m(lat, lon, s.lat, s.lon)
-        if d <= g.opts["walk_radius_m"]:
+        if d <= reach:
             out.append((s.id, d, d / g.opts["walk_speed_mps"] / 60.0))
     out.sort(key=lambda t: t[1])
-    return out[:8]
+    close = [t for t in out if t[1] <= walk]
+    return (close or out)[:8]
 
 
 def plan(

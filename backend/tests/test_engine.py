@@ -109,6 +109,23 @@ def test_board_fare_paid_once_per_boarding():
     assert it.total_fare == 9.0
 
 
+def test_long_first_walk_when_no_stop_is_close():
+    """Nothing within 900 m of the start: walk further, up to 3 km, to the nearest stop rather than
+    find no trip at all."""
+    g, _, e = _line_network()
+    start = (5.6 - 0.0135, -0.2)  # ~1.5 km south of stop A
+    it = plan(g, start, e, "fastest")
+    assert it is not None
+    first = it.legs[0]
+    assert first.kind == "walk" and first.to_station == "a"
+    assert 1400 < first.distance_m < 1600
+
+
+def test_no_trip_when_every_stop_is_too_far():
+    g, _, e = _line_network()
+    assert plan(g, (5.6 - 0.04, -0.2), e, "fastest") is None  # ~4.4 km from the nearest stop
+
+
 def test_walks_never_chain():
     """Stops a few hundred metres apart must not add up to a free walk across the city."""
     g, a, e = _line_network()
