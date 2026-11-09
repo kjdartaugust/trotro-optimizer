@@ -1,7 +1,7 @@
 """Overture's places -> the app's places file (app/etl/overture_places.py), on made-up rows."""
 import struct
 
-from app.etl.overture_places import build, kind_of, point, squash, tier_of
+from app.etl.overture_places import build, clean_name, kind_of, point, squash, tier_of
 
 
 def wkb(lon: float, lat: float) -> bytes:
@@ -30,6 +30,19 @@ def test_squash_matches_the_apps_search():
     assert squash("Zoom lion") == squash("Zoomlion") == "zomlion"
     assert squash("Trassaco") == "trasaco"
     assert squash("Café Kwaku's") == "cafekwakus"
+
+
+def test_names_lose_phone_numbers_and_pasted_adverts():
+    assert clean_name("Mizprom Herbal Centre +233245304968") == "Mizprom Herbal Centre"
+    assert clean_name("Wellness activist 0307098410/ 0248787472") == "Wellness activist"
+    assert (
+        clean_name("Karima Auto & Shipping Ltd. Accra - Door 2 door & car shipping from United States to Ghana.")
+        == "Karima Auto & Shipping Ltd. Accra"
+    )
+    farm = "Frangladys Fruits Farm. Gbefi, Kpando Municipality, Volta Region, Ghana."
+    assert clean_name(farm) == "Frangladys Fruits Farm"
+    assert clean_name("Zoomlion  Ghana Limited") == "Zoomlion Ghana Limited"
+    assert clean_name("Accra Mall") == "Accra Mall"
 
 
 def test_reads_a_wkb_point():
