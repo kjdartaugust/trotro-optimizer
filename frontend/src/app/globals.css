@@ -769,6 +769,18 @@ h3 {
   font-size: 14px;
 }
 
+.note p {
+  margin: 0;
+}
+
+.note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-top: 12px;
+}
+
 /* ── Opening: the first download ─────────────────────────────────────────── */
 
 .opening p {
@@ -1523,7 +1535,8 @@ h3 {
 
 .segmented {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 2px;
   padding: 3px;
   border-radius: 14px;
@@ -1640,4 +1653,94 @@ h3 {
   background: none;
   color: var(--brand-ink);
   font-weight: 700;
+}
+
+/* ── A station's fare board ──────────────────────────────────────────────── */
+
+.photo-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 16px;
+  background: var(--fill);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.photo-btn input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.photo-btn:focus-within {
+  border-color: var(--brand-strong);
+  box-shadow: 0 0 0 4px var(--brand-soft);
+}
+
+.photo-btn svg {
+  flex: none;
+  color: var(--brand-ink);
+}
+
+.photo-btn span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.photo-btn small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.photo-btn.busy {
+  cursor: progress;
+  opacity: 0.75;
+}
+
+.field-problem {
+  margin: 10px 0 0;
+  color: var(--bad-ink, #b42318);
+  font-size: 13.5px;
+}
+
+.board-rows {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.board-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 40px;
+  gap: 8px;
+  align-items: center;
+}
+
+.board-row .input.fare {
+  padding: 0 10px;
+  text-align: right;
+}
+
+.board-row .input.bad {
+  border-color: var(--bad-ink, #b42318);
+}
+
+.board-match {
+  display: block;
+  margin: 4px 2px 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.board-match.new {
+  color: var(--brand-ink);
 }

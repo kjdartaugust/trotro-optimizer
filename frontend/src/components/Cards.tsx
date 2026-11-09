@@ -214,16 +214,12 @@ export function PinCard({
   onClose: () => void;
 }) {
   const end: End = { name: name ?? "Dropped pin", at, kind: "pin" };
-  const nearest = nearestStations(net, at, 900)[0];
+  const nearest = nearestStations(net, at, Infinity)[0];
   return (
     <div className="card rise">
       <CardHead
         title={name ?? "Dropped pin"}
-        sub={
-          nearest
-            ? `Nearest trotro stop: ${nearest.s.name}, ${metres(nearest.m)} away`
-            : "No trotro stop within a 12-minute walk"
-        }
+        sub={nearest ? `Nearest trotro stop: ${nearest.s.name}, ${metres(nearest.m)} away` : "No trotro stops yet"}
         onClose={onClose}
       />
       <EndActions end={end} onStart={onStart} onGo={onGo} />

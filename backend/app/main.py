@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from .config import settings
-from .routers import contributions, meta, moderation, routes, stations, sync
+from .routers import contributions, fareboards, meta, moderation, routes, stations, sync
 
 app = FastAPI(
     title="TroTro Optimizer API",
@@ -25,7 +25,7 @@ app.add_middleware(
 # /sync/dataset is the whole network (~1.5 MB of JSON); phones on mobile data fetch it once.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-for r in (meta, stations, routes, contributions, moderation, sync):
+for r in (meta, stations, routes, contributions, fareboards, moderation, sync):
     app.include_router(r.router)
 
 

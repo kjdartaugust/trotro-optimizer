@@ -13,6 +13,9 @@ export type Mode = "fastest" | "cheapest" | "fewest";
 
 export interface EngineOpts {
   walkRadiusM: number;
+  /** When no stop is within walkRadiusM of where a trip starts or ends, walk up to this far to the
+   *  nearest ones instead: a long first or last walk beats no trip at all. */
+  accessRadiusM: number;
   walkSpeedMps: number;
   boardPenaltyMin: number;
   transferPenaltyMin: number;
@@ -20,6 +23,7 @@ export interface EngineOpts {
 
 export const DEFAULT_OPTS: EngineOpts = {
   walkRadiusM: 900,
+  accessRadiusM: 3000,
   walkSpeedMps: 1.25,
   boardPenaltyMin: 4,
   transferPenaltyMin: 3,
@@ -188,14 +192,19 @@ function keyLess(a: Vec, b: Vec): boolean {
   return false;
 }
 
+/** The stops a trip can start or end at, nearest first, 8 at most: those within the walk radius,
+ *  or when none is that close, the nearest within the access radius. */
 function nearestHubs(g: Graph, lat: number, lon: number): [string, number, number][] {
+  const walk = g.opts.walkRadiusM;
+  const reach = Math.max(g.opts.accessRadiusM ?? walk, walk);
   const out: [string, number, number][] = [];
   for (const s of g.stations.values()) {
     const d = haversineM(lat, lon, s.lat, s.lon);
-    if (d <= g.opts.walkRadiusM) out.push([s.id, d, d / g.opts.walkSpeedMps / 60]);
+    if (d <= reach) out.push([s.id, d, d / g.opts.walkSpeedMps / 60]);
   }
   out.sort((a, b) => a[1] - b[1]);
-  return out.slice(0, 8);
+  const close = out.filter((t) => t[1] <= walk);
+  return (close.length ? close : out).slice(0, 8);
 }
 
 type HeapItem = { key: Vec; seq: number; node: string; vec: Vec };

@@ -43,3 +43,11 @@ services:
         value: "20"
       - key: FARE_REPORT_HALFLIFE_DAYS
         value: "30"
+      # Reading photos of station fare boards (optional): any vision model behind an
+      # OpenAI-style chat-completions API. Unset, riders type boards in. See README "Fare boards".
+      - key: VISION_BASE_URL
+        sync: false
+      - key: VISION_MODEL
+        sync: false
+      - key: VISION_API_KEY
+        sync: false

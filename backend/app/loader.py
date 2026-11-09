@@ -54,6 +54,7 @@ async def load_graph(db: AsyncSession) -> Graph:
 
     opts = {
         "walk_radius_m": settings.walk_radius_m,
+        "access_radius_m": settings.access_radius_m,
         "walk_speed_mps": settings.walk_speed_mps,
         "board_penalty_min": settings.board_penalty_min,
         "transfer_penalty_min": settings.transfer_penalty_min,

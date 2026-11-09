@@ -11,6 +11,7 @@ import Sheet, { isDesktop, sheetHeight, type Snap } from "@/components/Sheet";
 import Steps from "@/components/Steps";
 import type { Drawn } from "@/components/TripMap";
 import TripFields from "@/components/TripFields";
+import { DEFAULT_OPTS } from "@/engine/engine";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
 import { allRoutes, allStations, hasDataset, outbox } from "@/lib/db";
 import { cedis, metres, minutes, routeColor } from "@/lib/format";
@@ -58,10 +59,13 @@ type Panel =
 type Result =
   | { state: "planning" }
   | { state: "found"; options: TripOption[]; estimated: boolean }
-  | { state: "none"; why: string };
+  // `instead`: the nearest stop, to start or end the trip at when the place itself is too far.
+  | { state: "none"; why: string; instead?: { field: Field; end: End } };
 
-// The planner walks up to 900 m to a stop (engine DEFAULT_OPTS.walkRadiusM).
-const WALK_M = 900;
+// The planner walks to the nearest stops up to this far when none is within 900 m.
+const ACCESS_M = DEFAULT_OPTS.accessRadiusM;
+// Where the map opens (TripMap's ACCRA): places are found nearest here until the map moves.
+const START_VIEW: LngLat = [-0.205, 5.6];
 
 export default function Home() {
   const [net, setNet] = useState<Network | null>(null);
@@ -83,6 +87,7 @@ export default function Home() {
   ends.current = { from, to };
   const ticket = useRef(0);
   const linked = useRef(false);
+  const view = useRef<LngLat>(START_VIEW);
 
   const frame = (coords: LngLat[]) => setFit((f) => ({ coords, seq: (f?.seq ?? 0) + 1 }));
 
@@ -188,6 +193,24 @@ export default function Home() {
   function edit(field: Field) {
     setPanel({ kind: "search", field });
     setSnap("full");
+    sense();
+  }
+
+  // If the phone already lets us know where the rider is, find out quietly (never ask from here),
+  // so places come nearest them first, with how far each is.
+  function sense() {
+    if (me || !("geolocation" in navigator) || !navigator.permissions?.query) return;
+    navigator.permissions
+      .query({ name: "geolocation" as PermissionName })
+      .then((p) => {
+        if (p.state !== "granted") return;
+        navigator.geolocation.getCurrentPosition(
+          (pos) => setMe([pos.coords.longitude, pos.coords.latitude]),
+          () => undefined,
+          { maximumAge: 120_000, timeout: 8_000 }
+        );
+      })
+      .catch(() => undefined);
   }
 
   function pickOnMap(field: Field) {
@@ -281,12 +304,24 @@ export default function Home() {
     }
     const mine = ++ticket.current;
     setResult({ state: "planning" });
-    const far = [from, to].find((e) => !nearestStations(net, e.at, WALK_M).length);
+    const far = ([["from", from], ["to", to]] as const).find(([, e]) => !nearestStations(net, e.at, ACCESS_M).length);
     if (far) {
-      setResult({
-        state: "none",
-        why: `There's no trotro stop within a 12-minute walk of ${far.name} yet.`,
-      });
+      const [field, e] = far;
+      const near = nearestStations(net, e.at, Infinity)[0];
+      setResult(
+        near
+          ? {
+              state: "none",
+              why:
+                `The nearest trotro stop we know is ${near.s.name}, ${metres(near.m)} from ${e.name}: too far to walk. ` +
+                (field === "from" ? "Get a taxi there and start from it." : "Ride there, then get a taxi."),
+              instead: {
+                field,
+                end: { name: near.s.name, detail: near.s.town ?? undefined, at: [near.s.lon, near.s.lat], stop: near.s.id, kind: "stop" },
+              },
+            }
+          : { state: "none", why: "There are no trotro stops on this phone yet." }
+      );
       return;
     }
     planTrip([from.at[1], from.at[0]], [to.at[1], to.at[0]])
@@ -428,6 +463,7 @@ export default function Home() {
         onTap={tapped}
         onStop={tappedStop}
         onLines={tappedLines}
+        onMoved={(c) => (view.current = c)}
       />
       {panel.kind === "pick" && (
         <div className="map-hint" role="status">
@@ -450,6 +486,8 @@ export default function Home() {
             net={net}
             recent={recentEnds()}
             online={online}
+            near={me ?? view.current}
+            me={me}
             onPick={(e) => choose(panel.field, e)}
             onLocate={() => locate(panel.field)}
             onMap={() => pickOnMap(panel.field)}
@@ -504,7 +542,21 @@ export default function Home() {
           <div className="trip">
             <TripFields from={from} to={to} onEdit={edit} onSwap={swap} onClear={clearTrip} />
             {result?.state === "planning" && <Planning />}
-            {result?.state === "none" && <p className="note rise">{result.why}</p>}
+            {result?.state === "none" && (
+              <div className="note rise">
+                <p>{result.why}</p>
+                {result.instead && (
+                  <div className="note-actions">
+                    <button type="button" className="chip chip-accent" onClick={() => choose(result.instead!.field, result.instead!.end)}>
+                      {result.instead.field === "from" ? "Start" : "End"} at {result.instead.end.name}
+                    </button>
+                    <Link href="/contribute?tab=board" className="quiet-link">
+                      Know a trotro closer? Tell us
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
             {result?.state === "found" && net && from && to && option && (
               <div className="rise">
                 {straight <= 1000 && (

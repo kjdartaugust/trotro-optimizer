@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------- Stations ----------
@@ -106,11 +106,34 @@ class PlanResponse(BaseModel):
 
 # ---------- Contributions ----------
 class ContributionCreate(BaseModel):
-    kind: Literal["station", "route", "fare"]
+    # fareboard: a station's fare board, payload {"station_id", "rows": [{"to", "fare",
+    # "to_station_id"}], "effective", "read": "photo"|"typed"} (see app/fares.py).
+    kind: Literal["station", "route", "fare", "fareboard"]
     target_id: str | None = None
     payload: dict[str, Any]
     note: str | None = None
     client_key: str | None = None
+
+    @model_validator(mode="after")
+    def _fareboard_shape(self):
+        if self.kind != "fareboard":
+            return self
+        p = self.payload
+        if not isinstance(p.get("station_id"), str) or not p["station_id"]:
+            raise ValueError("a fare board needs the station it's at")
+        rows = p.get("rows")
+        if not isinstance(rows, list) or not 1 <= len(rows) <= 80:
+            raise ValueError("a fare board needs 1 to 80 rows")
+        for r in rows:
+            fare = r.get("fare") if isinstance(r, dict) else None
+            to = r.get("to") if isinstance(r, dict) else None
+            if not isinstance(to, str) or not 1 <= len(to.strip()) <= 80:
+                raise ValueError("each row needs where it goes")
+            if isinstance(fare, bool) or not isinstance(fare, int | float) or not 0.5 <= fare <= 500:
+                raise ValueError("each row needs a fare in cedis")
+            if r.get("to_station_id") is not None and not isinstance(r["to_station_id"], str):
+                raise ValueError("to_station_id is a station id")
+        return self
 
 
 class ContributionOut(BaseModel):

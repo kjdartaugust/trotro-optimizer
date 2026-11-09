@@ -42,7 +42,7 @@ export default function Steps({
         </li>
         {legs.map((leg, i) =>
           leg.kind === "walk" ? (
-            <WalkStep key={i} leg={leg} last={i === legs.length - 1} to={to} />
+            <WalkStep key={i} leg={leg} first={i === 0} last={i === legs.length - 1} to={to} />
           ) : (
             <RideStep key={i} leg={leg} net={net} estimated={estimated} onLine={onLine} />
           )
@@ -67,7 +67,11 @@ export default function Steps({
   );
 }
 
-function WalkStep({ leg, last, to }: { leg: Leg; last: boolean; to: End }) {
+// A first or last walk this long is there because no stop is closer: a taxi may be quicker.
+const LONG_WALK_M = 1500;
+
+function WalkStep({ leg, first, last, to }: { leg: Leg; first: boolean; last: boolean; to: End }) {
+  const long = leg.distanceM >= LONG_WALK_M && (first || last);
   return (
     <li className="step walk">
       <span className="step-icon" aria-hidden="true">
@@ -77,7 +81,10 @@ function WalkStep({ leg, last, to }: { leg: Leg; last: boolean; to: End }) {
         <p>
           Walk {metres(leg.distanceM)} to <b>{last ? to.name : leg.toName ?? "the stop"}</b>
         </p>
-        <small>About {minutes(leg.minutes)}</small>
+        <small>
+          About {minutes(leg.minutes)}
+          {long && (first && !last ? `. A long walk: a taxi to ${leg.toName ?? "the stop"} may be quicker.` : `. A long walk: a taxi from ${leg.fromName ?? "the stop"} may be quicker.`)}
+        </small>
       </div>
     </li>
   );
