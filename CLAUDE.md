@@ -20,6 +20,7 @@ python -m app.seed                   # sync the DB's network to seed/accra.json 
 python -m app.seed --reset --file seed/demo.json   # dev: the 17-station demo network instead
 python -m app.etl.osm_network        # rebuild seed/accra.json from OpenStreetMap (Overpass)
 python -m app.etl.osm_shapes         # rebuild the map's route lines (frontend/public/network/shapes.json)
+python -m app.etl.overture_places    # rebuild the map's/search's places (public/network/places.json; pip install overturemaps)
 python -m tests.parity               # regenerate tests/fixtures/parity.json after either of these
 pytest                               # all tests (test_seed needs Postgres; skipped without)
 pytest tests/test_engine.py -k plan  # single test / filter
@@ -122,7 +123,22 @@ MapLibre adds a move's padding to the map's, and mixing them left no room to fra
 ~10 km), ranked by name match (`nameMatch`: spaces/doubled letters ignored via `search.squash`)
 then distance from the rider (`me`: only read silently when geolocation is already granted) or
 else the map's centre (`TripMap onMoved`). Never from a fixed point. No hits with a space in the
-query: retried without spaces ("Zoom lion").
+query: retried without spaces ("Zoom lion"). Overture's places (`lib/morePlaces.ts`,
+`findMorePlaces`) answer first and offline; `SearchPanel` merges them with Photon's through
+`rankPlaces` (same name within 300 m = one place).
+
+**Places on the map** (`lib/mapPlaces.ts`): OpenStreetMap's POIs from the tiles' `poi` layer and
+Overture's from `public/network/places.json` (source `places`) share one look (icon by `class`,
+name coloured by kind) and three tiers by zoom (14.5/15.5/16.5), stacked above our lines and
+under street/town names (`placesBefore`). Overture features carry the tiles' property names
+(`class`, `name`, `rank`, plus `tier`, `i`) so one style draws both; `icon-image` must not take
+`["image", null]` (an error that hides the icon), hence `to-string`. Taps on a place give
+`onTap(at, {name, i})`. `places.json` is built by `app/etl/overture_places.py` (needs
+`pip install overturemaps`; not a server dependency): confidence ≥ 0.5, copies merged, kind and
+tier per place, `on_osm_map` set where OSM's tiles already draw it (not drawn again; still
+searched). Rebuild it monthly (Overture's releases) or after the network's area changes. Credit
+"Overture Maps Foundation" wherever places show. The theme switch uses `setStyle(..., {diff:
+false})`: a diffed style drops our layers with no `style.load` to re-add them.
 
 **Route lines.** `app/etl/osm_shapes.py` writes one encoded polyline per route id to
 `frontend/public/network/shapes.json`; `lib/shapes.ts` decodes it and cuts rides out with

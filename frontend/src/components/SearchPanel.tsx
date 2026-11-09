@@ -2,13 +2,15 @@
 
 /**
  * Choosing one end of a trip: a stop (found offline, as you type), any place the trotros reach
- * (online), where you are, or a spot on the map. Lines match too, and open their card. Places come
- * nearest first, from where the rider is or else from where the map is looking, with how far
- * each is when we know where the rider is.
+ * (Overture's list on this device, offline too, and OpenStreetMap's through Photon, online), where
+ * you are, or a spot on the map. Lines match too, and open their card. Places come nearest first,
+ * from where the rider is or else from where the map is looking, with how far each is when we
+ * know where the rider is.
  */
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { findMorePlaces, type MorePlaces } from "@/lib/morePlaces";
 import type { Network } from "@/lib/network";
-import { searchPlaces, type Place } from "@/lib/places";
+import { rankPlaces, searchPlaces, SHOWN, type Place } from "@/lib/places";
 import { findLines, findStops } from "@/lib/search";
 import { metres as distance, type LngLat } from "@/lib/shapes";
 import type { End, Field } from "@/lib/trip";
@@ -24,6 +26,7 @@ type Option =
 export default function SearchPanel({
   field,
   net,
+  more,
   recent,
   online,
   near,
@@ -36,6 +39,8 @@ export default function SearchPanel({
 }: {
   field: Field;
   net: Network | null;
+  /** Overture's places on this device (lib/morePlaces.ts), once loaded. */
+  more: MorePlaces | null;
   recent: End[];
   online: boolean;
   /** Places nearest this first: where the rider is, or else where the map is looking. */
@@ -49,7 +54,7 @@ export default function SearchPanel({
   onBack: () => void;
 }) {
   const [q, setQ] = useState("");
-  const [places, setPlaces] = useState<Place[]>([]);
+  const [photon, setPhoton] = useState<Place[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -66,7 +71,7 @@ export default function SearchPanel({
 
   useEffect(() => {
     if (term.length < 3 || !online) {
-      setPlaces([]);
+      setPhoton([]);
       setStatus("idle");
       return;
     }
@@ -76,7 +81,7 @@ export default function SearchPanel({
     const t = setTimeout(() => {
       searchPlaces(term, nearby.current, ctl.signal)
         .then((found) => {
-          setPlaces(found);
+          setPhoton(found);
           setStatus("idle");
         })
         .catch((e: Error) => {
@@ -89,6 +94,15 @@ export default function SearchPanel({
     };
   }, [term, online]);
 
+  // Overture's places answer at once, offline too; Photon's join them when they come.
+  const local = useMemo(
+    () => (more && term.length >= 3 ? findMorePlaces(more, term, nearby.current.near) : []),
+    [more, term]
+  );
+  const places = useMemo(
+    () => (photon.length ? rankPlaces([...local, ...photon], term, nearby.current.near) : local).slice(0, SHOWN),
+    [local, photon, term]
+  );
   const stops = net ? findStops(net, term) : [];
   const lines = net ? findLines(net, term) : [];
   const groups: { title: string | null; options: Option[] }[] = term
@@ -215,8 +229,10 @@ export default function SearchPanel({
             {g.title === "Places" && term.length >= 3 && status === "loading" && places.length === 0 && (
               <li className="results-note">Searching places…</li>
             )}
-            {g.title === "Places" && term.length >= 3 && !online && (
-              <li className="results-note">Places need the internet. Stops work offline.</li>
+            {g.title === "Places" && term.length >= 3 && !online && !places.length && (
+              <li className="results-note">
+                {more ? "More places need the internet. Stops work offline." : "Places need the internet. Stops work offline."}
+              </li>
             )}
             {g.title === "Places" && status === "error" && (
               <li className="results-note">Place search isn&apos;t answering. Try a stop, or pick on the map.</li>
