@@ -202,6 +202,8 @@ export function PinCard({
   net,
   at,
   name,
+  detail,
+  place,
   onStart,
   onGo,
   onClose,
@@ -209,17 +211,32 @@ export function PinCard({
   net: Network;
   at: LngLat;
   name: string | null;
+  /** What and where a tapped place is: "Pharmacy · Osu". */
+  detail?: string;
+  /** A named place tapped on the map, not a spot. */
+  place?: boolean;
   onStart: (e: End) => void;
   onGo: (e: End) => void;
   onClose: () => void;
 }) {
-  const end: End = { name: name ?? "Dropped pin", at, kind: "pin" };
+  const end: End = { name: name ?? "Dropped pin", detail, at, kind: place ? "place" : "pin" };
   const nearest = nearestStations(net, at, Infinity)[0];
+  const stop = nearest ? `Nearest trotro stop: ${nearest.s.name}, ${metres(nearest.m)} away` : "No trotro stops yet";
   return (
     <div className="card rise">
       <CardHead
         title={name ?? "Dropped pin"}
-        sub={nearest ? `Nearest trotro stop: ${nearest.s.name}, ${metres(nearest.m)} away` : "No trotro stops yet"}
+        sub={
+          detail ? (
+            <>
+              {detail}
+              <br />
+              {stop}
+            </>
+          ) : (
+            stop
+          )
+        }
         onClose={onClose}
       />
       <EndActions end={end} onStart={onStart} onGo={onGo} />

@@ -30,7 +30,7 @@ export interface Nearby {
 
 const PHOTON = "https://photon.komoot.io";
 const GHANA: Bounds = [-3.3, 4.5, 1.3, 11.2];
-const SHOWN = 6;
+export const SHOWN = 6;
 
 interface PhotonFeature {
   geometry: { coordinates: [number, number] };

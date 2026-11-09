@@ -31,10 +31,15 @@ Built for a phone first, the way Google or Apple Maps works:
   (`frontend/public/network/shapes.json`, below), faint enough that the busy corridors build up.
   Tap a line to see its stops, times and fares; tap a road that many share to see them all; tap
   a stop to start or end a trip there.
+- **The places on it, like a map app.** Shops, offices, schools, clinics, churches and mosques,
+  fuel stations, banks: each with its icon and a name in the colour of its kind, the busiest or
+  surest from zoom 14.5 and the rest as you zoom in. OpenStreetMap's places come with the street
+  tiles; Overture's list adds ~16,000 more of Accra's businesses (below). Tap one to see what and
+  where it is, the nearest trotro stop, and "Go here" / "Start here".
 - **Start from anywhere.** Search a stop (offline, as you type), any place the trotros reach
-  (Photon, OpenStreetMap's place search, online), "Where I am", or choose a spot on the map. Swap,
-  recent trips, and a link for every trip and line (`/?from=…&to=…`, `/?line=…`) to share on
-  WhatsApp.
+  (Overture's places on the phone, offline too, and Photon, OpenStreetMap's place search,
+  online), "Where I am", or choose a spot on the map. Swap, recent trips, and a link for every
+  trip and line (`/?from=…&to=…`, `/?line=…`) to share on WhatsApp.
 - **Search like a map app.** Places whose name matches come first, then the nearest to you (when
   the phone already shares your location; the app never asks just to search) or to where the
   map is looking, each with how far it is and its street. Only places inside the network's area
@@ -73,13 +78,13 @@ trotro-optimizer/
 │   ├── app/
 │   │   ├── routing/    Graph + multi-criteria Dijkstra (server mirror of TS engine)
 │   │   ├── routers/    /routes /stations /contributions /moderation /sync /auth
-│   │   ├── etl/        builds seed/accra.json from OpenStreetMap
+│   │   ├── etl/        builds seed/accra.json and the route lines (OpenStreetMap), places.json (Overture)
 │   │   └── ...
 │   ├── migrations/     SQL schema (Postgres + PostGIS + H3 spatial index)
 │   ├── seed/           the network: accra.json (OpenStreetMap), demo.json (17-stop test network)
 │   └── tests/
 ├── frontend/           Next.js 14 PWA (App Router, MapLibre, IndexedDB, offline engine)
-│   ├── public/network/ dataset.json (first-run network snapshot), shapes.json (route lines)
+│   ├── public/network/ dataset.json (first-run network snapshot), shapes.json (route lines), places.json
 │   ├── scripts/        snapshot.mjs: refresh dataset.json from the API
 │   └── src/
 │       ├── app/        the map page and the report page
@@ -201,6 +206,27 @@ their next sync. After that it only adds stations and routes that are missing. I
 row, so riders' fare reports and corrections survive every redeploy.
 
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL.
+
+## Places: OpenStreetMap's and Overture's
+
+OpenStreetMap knows few of Accra's businesses, so the map and search also use
+[Overture Maps](https://overturemaps.org)' places, built from Meta's, Microsoft's and others'
+business listings and refreshed monthly. `app/etl/overture_places.py` takes the ones in the
+network's area (the stops' bounds plus ~10 km) that Overture is fairly sure of (confidence
+≥ 0.5), merges a place listed twice, gives each a kind (a label for search, a map icon) and a
+tier (the zoom it shows from), names its area after the nearest stop's town, and marks the ones
+OpenStreetMap's tiles already draw, so the map doesn't show a place twice (search still finds
+them offline). It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 16,172
+places, ~250 KB over the wire. The app loads it after the network and the service worker keeps
+it, so search finds them offline.
+
+```bash
+pip install overturemaps                 # only for this script, not the server
+cd backend
+python -m app.etl.overture_places        # downloads Overture's places and OSM's for comparison
+```
+
+Places © [Overture Maps Foundation](https://overturemaps.org), CDLA Permissive 2.0.
 
 ## Fare boards
 
@@ -324,8 +350,8 @@ See `.env.example` for every variable and `docker-compose.yml` for the local top
 ## Tests
 
 ```bash
-cd backend && pytest              # routing engine + API + trust scoring + the OSM import + route lines
-cd frontend && npm test           # engine parity, route lines, trip options
+cd backend && pytest              # routing engine + API + trust scoring + the OSM import + route lines + places
+cd frontend && npm test           # engine parity, route lines, trip options, place search and the places file
 ```
 
 Both engines are held to the same answers on 30 real trips across the network

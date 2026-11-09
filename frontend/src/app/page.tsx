@@ -9,7 +9,7 @@ import Options from "@/components/Options";
 import SearchPanel from "@/components/SearchPanel";
 import Sheet, { isDesktop, sheetHeight, type Snap } from "@/components/Sheet";
 import Steps from "@/components/Steps";
-import type { Drawn } from "@/components/TripMap";
+import type { Drawn, TappedPlace } from "@/components/TripMap";
 import TripFields from "@/components/TripFields";
 import { DEFAULT_OPTS } from "@/engine/engine";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
@@ -24,6 +24,7 @@ import {
   stopsOf,
   type Network,
 } from "@/lib/network";
+import { detailOf, loadMorePlaces, type MorePlaces } from "@/lib/morePlaces";
 import { nameOf } from "@/lib/places";
 import { planTrip, warmPlanner } from "@/lib/plan";
 import { loadShapes, metres as distance, type LngLat } from "@/lib/shapes";
@@ -54,7 +55,8 @@ type Panel =
   | { kind: "line"; id: string }
   | { kind: "lines"; ids: string[] }
   | { kind: "stop"; id: string }
-  | { kind: "pin"; at: LngLat; name: string | null };
+  // `place`: a named place tapped on the map, not just a spot.
+  | { kind: "pin"; at: LngLat; name: string | null; detail?: string; place?: boolean };
 
 type Result =
   | { state: "planning" }
@@ -83,6 +85,7 @@ export default function Home() {
   const [focus, setFocus] = useState<{ at: LngLat; zoom?: number; seq: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [recent, setRecent] = useState<Recent[]>([]);
+  const [more, setMore] = useState<MorePlaces | null>(null);
   const ends = useRef({ from, to });
   ends.current = { from, to };
   const ticket = useRef(0);
@@ -108,6 +111,8 @@ export default function Home() {
       setLoad("error");
       return;
     }
+    // The shops, offices and the rest for the map and search: after the trotros, never before.
+    void loadMorePlaces().then((m) => m && setMore(m));
     // Then catch up with the API, which can take a minute to wake: nothing waits on it.
     try {
       const { changed } = await pull();
@@ -254,9 +259,16 @@ export default function Home() {
     [net]
   );
 
-  function tapped(at: LngLat) {
+  function tapped(at: LngLat, place?: TappedPlace) {
+    // A place on the map has its name already; a bare spot is named by asking Photon.
+    const known = place?.i !== undefined ? more?.list[place.i] : undefined;
+    const detail = known ? detailOf(known) : undefined;
     if (panel.kind === "pick") {
       const field = panel.field;
+      if (place) {
+        choose(field, { name: place.name, detail, at, kind: "place" });
+        return;
+      }
       choose(field, { name: "Pin on the map", at, kind: "pin" });
       void nameOf(at).then((name) => {
         if (!name) return;
@@ -266,8 +278,12 @@ export default function Home() {
       });
       return;
     }
-    setPanel({ kind: "pin", at, name: null });
     setSnap("peek");
+    if (place) {
+      setPanel({ kind: "pin", at, name: place.name, detail, place: true });
+      return;
+    }
+    setPanel({ kind: "pin", at, name: null });
     void nameOf(at).then((name) =>
       setPanel((p) => (p.kind === "pin" && p.at === at ? { ...p, name } : p))
     );
@@ -452,6 +468,7 @@ export default function Home() {
       <TripMap
         network={network}
         stops={net?.stations ?? []}
+        places={more?.geojson ?? null}
         drawn={drawn}
         from={from?.at ?? null}
         to={to?.at ?? null}
@@ -484,6 +501,7 @@ export default function Home() {
             key={panel.field}
             field={panel.field}
             net={net}
+            more={more}
             recent={recentEnds()}
             online={online}
             near={me ?? view.current}
@@ -524,6 +542,8 @@ export default function Home() {
             net={net}
             at={panel.at}
             name={panel.name}
+            detail={panel.detail}
+            place={panel.place}
             onStart={(e) => choose("from", e)}
             onGo={(e) => choose("to", e)}
             onClose={closeCard}

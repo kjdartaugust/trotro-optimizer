@@ -1,10 +1,12 @@
 "use client";
 
 /**
- * The map: OpenFreeMap streets (light or dark, as the phone is set), every trotro line along the
- * roads it drives, the stops once you're close enough to tell them apart, and the open trip or line
- * in its own colours. Taps go to a stop, else to the lines under the finger, else to the spot.
- * Tiles need the internet; everything drawn on them comes from the offline tables.
+ * The map: OpenFreeMap streets (light or dark, as the phone is set), the places on them (shops,
+ * schools, clinics, churches: OpenStreetMap's and Overture's, lib/mapPlaces.ts), every trotro line
+ * along the roads it drives, the stops once you're close enough to tell them apart, and the open
+ * trip or line in its own colours. Taps go to a stop, else a place, else the lines under the
+ * finger, else the spot. Tiles need the internet; everything drawn on them comes from the offline
+ * tables.
  */
 import maplibregl, {
   type ExpressionSpecification,
@@ -15,8 +17,15 @@ import maplibregl, {
   type PaddingOptions,
 } from "maplibre-gl";
 import { useEffect, useRef } from "react";
+import { morePlaceLayers, osmPlaceLayers, PLACE_LAYERS, placeName, placesBefore } from "@/lib/mapPlaces";
 import type { LngLat } from "@/lib/shapes";
 import type { ApiStation } from "@/lib/types";
+
+/** A place tapped on the map: its name, and its index in lib/morePlaces' list if it's Overture's. */
+export interface TappedPlace {
+  name: string;
+  i?: number;
+}
 
 const STYLE = {
   light: "https://tiles.openfreemap.org/styles/positron",
@@ -178,6 +187,7 @@ const fc = (features: GeoJSON.Feature[]): GeoJSON.FeatureCollection => ({
   type: "FeatureCollection",
   features,
 });
+const EMPTY = fc([]);
 const line = (coords: LngLat[], props: Record<string, unknown> = {}): GeoJSON.Feature => ({
   type: "Feature",
   geometry: { type: "LineString", coordinates: coords },
@@ -199,6 +209,7 @@ function marker(kind: "from" | "to" | "me"): HTMLElement {
 export default function TripMap({
   network,
   stops,
+  places,
   drawn,
   from,
   to,
@@ -215,6 +226,8 @@ export default function TripMap({
   /** Every route's line, by id. */
   network: { id: string; coords: LngLat[] }[];
   stops: ApiStation[];
+  /** Overture's places (lib/morePlaces.ts), once loaded. */
+  places: GeoJSON.FeatureCollection | null;
   /** The open trip or line; null for the plain network. */
   drawn: Drawn | null;
   from: LngLat | null;
@@ -226,9 +239,10 @@ export default function TripMap({
   focus: { at: LngLat; zoom?: number; seq: number } | null;
   /** Room the sheet or panel takes, so what's framed isn't hidden under it. */
   padding: PaddingOptions;
-  /** Choosing a trip's end on the map: every tap is a spot. */
+  /** Choosing a trip's end on the map: every tap is a spot, or the place tapped. */
   picking: boolean;
-  onTap: (at: LngLat) => void;
+  /** A spot, or a place on the map (then `at` is the place's own point). */
+  onTap: (at: LngLat, place?: TappedPlace) => void;
   onStop: (id: string) => void;
   onLines: (ids: string[]) => void;
   /** Where the map is looking, after each move. */
@@ -237,8 +251,8 @@ export default function TripMap({
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
   const markers = useRef<Partial<Record<"from" | "to" | "me", Marker>>>({});
-  const data = useRef({ network, stops, drawn });
-  data.current = { network, stops, drawn };
+  const data = useRef({ network, stops, places, drawn });
+  data.current = { network, stops, places, drawn };
   const handlers = useRef({ onTap, onStop, onLines, onMoved, picking });
   handlers.current = { onTap, onStop, onLines, onMoved, picking };
   const pad = useRef(padding);
@@ -253,12 +267,18 @@ export default function TripMap({
     const sources: Record<string, GeoJSON.FeatureCollection> = {
       net: netData(data.current.network),
       stops: stopData(data.current.stops),
+      places: data.current.places ?? EMPTY,
       ...drawnData(data.current.drawn),
     };
     for (const [id, d] of Object.entries(sources)) {
       if (!m.getSource(id)) m.addSource(id, { type: "geojson", data: d });
     }
     for (const l of lineLayers(dark, !!data.current.drawn)) if (!m.getLayer(l.id)) m.addLayer(l, firstLabel);
+    // Places over the lines, under the street and town names; our stops over everything.
+    const beforePlaces = placesBefore(layers, lastShape);
+    for (const l of [...osmPlaceLayers(dark), ...morePlaceLayers(dark)]) {
+      if (!m.getLayer(l.id)) m.addLayer(l, beforePlaces);
+    }
     for (const l of pointLayers(dark)) if (!m.getLayer(l.id)) m.addLayer(l);
   }
 
@@ -290,8 +310,10 @@ export default function TripMap({
     m.addControl(
       new maplibregl.AttributionControl({
         compact: !desktop,
-        customAttribution:
+        customAttribution: [
           'Trotro routes <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>',
+          'Places <a href="https://overturemaps.org" target="_blank" rel="noreferrer">© Overture Maps Foundation</a>',
+        ],
       }),
       desktop ? "bottom-right" : "top-right"
     );
@@ -308,15 +330,34 @@ export default function TripMap({
     m.on("click", (e) => {
       const h = handlers.current;
       const at: LngLat = [e.lngLat.lng, e.lngLat.lat];
-      if (h.picking) {
-        h.onTap(at);
-        return;
-      }
       const { x, y } = e.point;
       const near = (r: number): [maplibregl.PointLike, maplibregl.PointLike] => [
         [x - r, y - r],
         [x + r, y + r],
       ];
+      // A place's icon or name under the finger: that place, at its own point.
+      const place = (): [LngLat, TappedPlace] | null => {
+        const layers = PLACE_LAYERS.filter((id) => m.getLayer(id));
+        if (!layers.length) return null;
+        const hit = m
+          .queryRenderedFeatures(near(10), { layers })
+          .map((f) => {
+            const c = (f.geometry as GeoJSON.Point).coordinates as [number, number];
+            const p = m.project(c);
+            return { f, c, d: Math.hypot(p.x - x, p.y - y) };
+          })
+          .sort((a, b) => a.d - b.d)[0];
+        const name = placeName(hit?.f.properties);
+        if (!hit || !name) return null;
+        const i = hit.f.source === "places" ? Number(hit.f.properties?.i) : undefined;
+        return [hit.c, { name, i: Number.isFinite(i) ? i : undefined }];
+      };
+      if (h.picking) {
+        const p = place();
+        if (p) h.onTap(...p);
+        else h.onTap(at);
+        return;
+      }
       if (m.getLayer("stops") && m.getZoom() >= 13) {
         const hit = m.queryRenderedFeatures(near(12), { layers: ["stops"] });
         if (hit.length) {
@@ -329,6 +370,11 @@ export default function TripMap({
           h.onStop(closest.id);
           return;
         }
+      }
+      const p = place();
+      if (p) {
+        h.onTap(...p);
+        return;
       }
       if (m.getLayer("net-hit")) {
         const hit = m.queryRenderedFeatures(near(7), { layers: ["net-hit"] });
@@ -343,13 +389,15 @@ export default function TripMap({
       const c = m.getCenter();
       handlers.current.onMoved?.([c.lng, c.lat]);
     });
-    for (const layer of ["stops", "net-hit"]) {
+    for (const layer of ["stops", "net-hit", ...PLACE_LAYERS]) {
       m.on("mouseenter", layer, () => (m.getCanvas().style.cursor = "pointer"));
       m.on("mouseleave", layer, () => (m.getCanvas().style.cursor = ""));
     }
 
     const dark = window.matchMedia(DARK);
-    const restyle = () => m.setStyle(STYLE[scheme()]);
+    // A full reload, not a diff: a diffed style drops our sources and layers without a
+    // "style.load" to dress it again, which left the map bare after the phone went dark.
+    const restyle = () => m.setStyle(STYLE[scheme()], { diff: false });
     dark.addEventListener("change", restyle);
     return () => {
       dark.removeEventListener("change", restyle);
@@ -365,6 +413,10 @@ export default function TripMap({
   useEffect(() => {
     (map.current?.getSource("stops") as GeoJSONSource | undefined)?.setData(stopData(stops));
   }, [stops]);
+
+  useEffect(() => {
+    (map.current?.getSource("places") as GeoJSONSource | undefined)?.setData(places ?? EMPTY);
+  }, [places]);
 
   useEffect(() => {
     const m = map.current;
