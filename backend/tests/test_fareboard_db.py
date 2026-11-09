@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.database import SessionLocal
+from app.database import SessionLocal, engine
 from app.models import Route, User
 from app.seed import route_uuid, station_uuid, sync
 from app.services import ingest_contribution
@@ -14,8 +14,17 @@ from tests.test_seed import _db_up, _small_osm
 
 
 async def test_a_trusted_fare_board_sets_the_fare_to_each_listed_stop():
-    if not await _db_up():
-        pytest.skip("no database")
+    try:
+        if not await _db_up():
+            pytest.skip("no database")
+        await _fare_board_sets_fares()
+    finally:
+        # Each test runs in its own event loop, and pooled connections can't cross loops: left in
+        # the pool, they made the network sync test after this one find the database "down".
+        await engine.dispose()
+
+
+async def _fare_board_sets_fares():
     osm = _small_osm()
     await sync(osm, reset=True)
     r = osm["routes"][0]
