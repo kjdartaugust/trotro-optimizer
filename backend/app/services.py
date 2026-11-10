@@ -43,7 +43,11 @@ async def ingest_contribution(
     db.add(contrib)
     await db.flush()
 
-    if confidence >= settings.auto_approve_threshold:
+    if kind == "place" and settings.place_fixes_auto_apply:
+        # A pin move shows for everyone at once, like an OpenStreetMap edit: anyone can move it
+        # again. It earns no trust: trust from pins would wave the same reporter's fares through.
+        await _approve(db, contrib, reviewer_id=None, earn_trust=False)
+    elif confidence >= settings.auto_approve_threshold:
         await _approve(db, contrib, reviewer_id=None)
     await db.commit()
     await db.refresh(contrib)
@@ -96,11 +100,13 @@ async def moderate(
     return contrib
 
 
-async def _approve(db: AsyncSession, contrib: Contribution, reviewer_id: str | None) -> None:
+async def _approve(
+    db: AsyncSession, contrib: Contribution, reviewer_id: str | None, earn_trust: bool = True
+) -> None:
     await apply_contribution(db, contrib)
     contrib.status = "approved"
     contrib.reviewed_by = reviewer_id
-    reporter = await db.get(User, contrib.reporter_id) if contrib.reporter_id else None
+    reporter = await db.get(User, contrib.reporter_id) if contrib.reporter_id and earn_trust else None
     if reporter:
         reporter.trust_score = apply_trust_delta(reporter.trust_score, approved=True)
 

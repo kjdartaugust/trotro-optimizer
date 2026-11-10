@@ -202,7 +202,7 @@ const line = (coords: LngLat[], props: Record<string, unknown> = {}): GeoJSON.Fe
   properties: props,
 });
 
-function marker(kind: "from" | "to" | "me"): HTMLElement {
+function marker(kind: "from" | "to" | "me" | "move"): HTMLElement {
   const el = document.createElement("div");
   el.className = `marker marker-${kind}`;
   el.innerHTML =
@@ -211,6 +211,7 @@ function marker(kind: "from" | "to" | "me"): HTMLElement {
       : kind === "from"
         ? '<span class="marker-dot"></span>'
         : '<svg viewBox="0 0 28 36" aria-hidden="true"><path d="M14 35s11-10.2 11-20A11 11 0 0 0 3 15c0 9.8 11 20 11 20z"/><circle cx="14" cy="14.5" r="4.2"/></svg>';
+  if (kind === "move") el.setAttribute("aria-label", "The place's pin: drag it to where the place is");
   return el;
 }
 
@@ -227,10 +228,12 @@ export default function TripMap({
   focus,
   padding,
   picking,
+  moving,
   onTap,
   onStop,
   onLines,
   onMoved,
+  onMovePin,
 }: {
   /** Every route's line, by id. */
   network: { id: string; coords: LngLat[] }[];
@@ -252,20 +255,25 @@ export default function TripMap({
   padding: PaddingOptions;
   /** Choosing a trip's end on the map: every tap is a spot, or the place tapped. */
   picking: boolean;
+  /** Moving a place's pin: where it is now. It drags, and a tap on the map puts it there. */
+  moving?: LngLat | null;
   /** A spot, or a place on the map (then `at` is the place's own point). */
   onTap: (at: LngLat, place?: TappedPlace) => void;
   onStop: (id: string) => void;
   onLines: (ids: string[]) => void;
   /** Where the map is looking, after each move. */
   onMoved?: (center: LngLat) => void;
+  /** The pin being moved was dragged or tapped to here. */
+  onMovePin?: (at: LngLat) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
   const markers = useRef<Partial<Record<"from" | "to" | "me", Marker>>>({});
+  const mover = useRef<Marker | null>(null);
   const data = useRef({ network, stops, places, hiddenOsm, drawn });
   data.current = { network, stops, places, hiddenOsm, drawn };
-  const handlers = useRef({ onTap, onStop, onLines, onMoved, picking });
-  handlers.current = { onTap, onStop, onLines, onMoved, picking };
+  const handlers = useRef({ onTap, onStop, onLines, onMoved, onMovePin, picking, moving });
+  handlers.current = { onTap, onStop, onLines, onMoved, onMovePin, picking, moving };
   const pad = useRef(padding);
   pad.current = padding;
 
@@ -341,6 +349,11 @@ export default function TripMap({
     m.on("click", (e) => {
       const h = handlers.current;
       const at: LngLat = [e.lngLat.lng, e.lngLat.lat];
+      // Moving a place's pin: a tap puts it there, whatever is under the finger.
+      if (h.moving) {
+        h.onMovePin?.(at);
+        return;
+      }
       const { x, y } = e.point;
       const near = (r: number): [maplibregl.PointLike, maplibregl.PointLike] => [
         [x - r, y - r],
@@ -471,6 +484,29 @@ export default function TripMap({
       }
     }
   }, [from?.[0], from?.[1], to?.[0], to?.[1], me?.[0], me?.[1]]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The pin being moved: on top of everything, draggable, and wherever a tap puts it.
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    if (!moving) {
+      mover.current?.remove();
+      mover.current = null;
+      return;
+    }
+    if (mover.current) {
+      mover.current.setLngLat(moving);
+      return;
+    }
+    const mk = new maplibregl.Marker({ element: marker("move"), anchor: "bottom", draggable: true })
+      .setLngLat(moving)
+      .addTo(m);
+    mk.on("dragend", () => {
+      const ll = mk.getLngLat();
+      handlers.current.onMovePin?.([ll.lng, ll.lat]);
+    });
+    mover.current = mk;
+  }, [moving?.[0], moving?.[1]]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const padKey = [padding.top, padding.right, padding.bottom, padding.left].join(",");
   useEffect(() => {

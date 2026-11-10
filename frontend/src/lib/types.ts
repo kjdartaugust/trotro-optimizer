@@ -29,11 +29,26 @@ export interface ApiRoute {
   stops: ApiRouteStop[];
 }
 
+/** Where riders say a place is (a "place" contribution; the API's `place_fixes`): the place of
+ *  this name nearest (from_lon, from_lat) in public/network/places.json shows at (lon, lat). */
+export interface ApiPlaceFix {
+  key: string;
+  name: string;
+  from_lat: number;
+  from_lon: number;
+  lat: number;
+  lon: number;
+  /** The server's sync version; LOCAL_FIX (lib/morePlaces) while it waits on this phone. */
+  version: number;
+}
+
 export interface DatasetSnapshot {
   version: number;
   generated_at: string;
   stations: ApiStation[];
   routes: ApiRoute[];
+  /** Riders' pin moves (absent from older servers and snapshots). */
+  place_fixes?: ApiPlaceFix[];
 }
 
 /** `/sync/changes`: rows newer than `since`, and the ones taken out of the network since. */
@@ -45,7 +60,7 @@ export interface ChangeSet extends DatasetSnapshot {
 
 export interface QueuedContribution {
   client_key: string;
-  kind: "station" | "route" | "fare" | "fareboard";
+  kind: "station" | "route" | "fare" | "fareboard" | "place";
   target_id: string | null;
   payload: Record<string, unknown>;
   note?: string;

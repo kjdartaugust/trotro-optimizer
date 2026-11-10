@@ -48,7 +48,7 @@ export async function fetchChanges(since: number): Promise<ChangeSet> {
 }
 
 export async function pushOutbox(items: QueuedContribution[]) {
-  return req<{ accepted: number; duplicates: number; ids: string[] }>("/sync/push", {
+  return req<{ accepted: number; duplicates: number; refused?: number; ids: string[] }>("/sync/push", {
     method: "POST",
     body: JSON.stringify({
       items: items.map((i) => ({

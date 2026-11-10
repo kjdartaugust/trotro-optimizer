@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .fares import apply_fareboard
 from .loader import dataset_version
-from .models import Contribution, Route, RouteStop, Station
+from .models import Contribution, PlaceFix, Route, RouteStop, Station
 
 
 async def _next_version(db: AsyncSession) -> int:
@@ -87,6 +87,20 @@ async def apply_contribution(db: AsyncSession, contrib: Contribution) -> None:
     elif contrib.kind == "fareboard":
         # A station's fare board: the fare from that station to each destination it lists.
         await apply_fareboard(db, contrib, v)
+
+    elif contrib.kind == "place":
+        # A place's pin moved to where it really is: the newest move of a place is where it shows.
+        (from_lon, from_lat), (lon, lat) = p["from"], p["to"]
+        fix = await db.get(PlaceFix, p["key"])
+        if fix is None:
+            db.add(
+                PlaceFix(
+                    key=p["key"], name=p["name"].strip(), from_lat=from_lat, from_lon=from_lon,
+                    lat=lat, lon=lon, version=v,
+                )
+            )
+        else:
+            fix.name, fix.lat, fix.lon, fix.version = p["name"].strip(), lat, lon, v
 
 
 def _stop(s: dict) -> dict:

@@ -375,6 +375,30 @@ h3 {
   fill: var(--brand);
 }
 
+/* A place's pin being moved: it takes the finger, unlike the other markers. */
+.marker.marker-move {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.marker-move svg {
+  display: block;
+  width: 40px;
+  height: 50px;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.4));
+}
+
+.marker-move path {
+  fill: var(--brand);
+  stroke: var(--text);
+  stroke-width: 1.6;
+}
+
+.marker-move circle {
+  fill: var(--text);
+}
+
 .marker-me {
   position: relative;
   width: 18px;
@@ -1401,6 +1425,26 @@ h3 {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 14px;
+}
+
+.card-foot {
+  margin: 12px 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* A button that reads as a link: a quiet way into something, under a card's main actions. */
+.link-btn {
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--brand-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 .line-list {

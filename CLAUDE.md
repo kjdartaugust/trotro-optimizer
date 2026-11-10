@@ -91,11 +91,13 @@ and never stored; `routers/fareboards.py` caps reads per address/hour and per da
 
 **Sync model.** Every row has a monotonic `version` (see `TimestampMixin`). `/sync/dataset` returns
 a full snapshot to seed a device; `/sync/changes?since=<cursor>` returns rows with `version >
-cursor`, plus the ids in `retired_rows` newer than the cursor (`deleted_*_ids`) for the device to
-drop; `/sync/push` replays offline-queued contributions, made idempotent by a client-supplied
-`client_key`. The frontend stores the dataset in IndexedDB and routes against it locally;
+cursor` (riders' pin moves, `place_fixes`, too), plus the ids in `retired_rows` newer than the
+cursor (`deleted_*_ids`) for the device to drop; `/sync/push` replays offline-queued
+contributions, made idempotent by a client-supplied `client_key`; an item it won't take is
+skipped and counted `refused` (a failed push would leave the phone's outbox stuck behind it). The frontend stores the dataset in IndexedDB and routes against it locally;
 `NETWORK_GENERATION` in `sync.ts` forces a full re-download when bumped. `dataset_version`
-(loader.py) includes retired rows, and the loader reads rows in id order, as IndexedDB does.
+(loader.py) includes retired rows and pin moves; the routing graph's cache keys on
+`network_version` (no pin moves), and the loader reads rows in id order, as IndexedDB does.
 
 **The network** is `backend/seed/accra.json`, built by `app/etl/osm_network.py` from OSM (stops,
 order, `travel_time`; fares estimated: `board_fare` GH¢5.50 + GH¢0.25/km). `app/seed.py` syncs it
@@ -147,7 +149,17 @@ own. A guessed spot is left out unless OSM has the place: a point several differ
 share (an area or street turned into a point: 293 listings sat on 5.55, -0.2 "Accra"; kept when
 most give the same venue address), a coarse one (4 decimals or fewer), and listings named just a
 town ("Nungua"). OSM's spot only counts when it isn't coarse or shared either. The app fetches `places.json?v=<hash>` (`next.config.mjs`), so a new file arrives with the app
-that reads it, not a cached one a visit later. Rebuild it monthly (Overture's releases) or after the
+that reads it, not a cached one a visit later. **Riders move a wrong pin** (a lone listing on
+the wrong spot is invisible in the data): the place's card (`PinCard`) offers "Wrong spot? Move
+it" for places we draw, `MoveCard` + TripMap's draggable `moving` marker take the new spot, and a
+`place` contribution (payload `key`, `name`, `from` = the file's spot, `to`; checked in
+`schemas._place_shape`: on the map, 3 m to `place_fix_max_m` from `from`) applies at once for
+everyone (`place_fixes_auto_apply`; no trust earned, since riders share one dev account and trust
+from pins would wave their fares through; 30 an hour per address, `limits.py`) into
+`place_fixes`. Phones keep moves in IndexedDB `meta.placeFixes` (no new store, so no upgrade to
+block on an open tab) and `morePlaces.withFixes` puts the place of that name nearest the file's
+spot (within 500 m, the newest move winning) at the move, for the map and search; a phone's own
+move shows at once (`LOCAL_FIX`) and a trip to that place follows it. Rebuild it monthly (Overture's releases) or after the
 network's area changes. Credit
 "Overture Maps Foundation" wherever places show. The theme switch uses `setStyle(..., {diff:
 false})`: a diffed style drops our layers with no `style.load` to re-add them.

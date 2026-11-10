@@ -2,11 +2,13 @@
 
 /**
  * What a tap on the map opens: a trotro line (its stops, times and fares), the lines on a road
- * that several share, a stop (the lines there; start or end a trip at it), or a dropped pin.
+ * that several share, a stop (the lines there; start or end a trip at it), a place or a dropped
+ * pin, and moving a place's pin to where it really is.
  */
 import { cedis, metres, minutes, plural, routeColor } from "@/lib/format";
+import { moveProblem, type MorePlace } from "@/lib/morePlaces";
 import { nearestStations, stopsOf, termini, type Network } from "@/lib/network";
-import type { LngLat } from "@/lib/shapes";
+import { metres as distance, type LngLat } from "@/lib/shapes";
 import type { End } from "@/lib/trip";
 import { ChevronIcon, CloseIcon, SwapIcon } from "./icons";
 import { RoutePill } from "./Options";
@@ -204,6 +206,8 @@ export function PinCard({
   name,
   detail,
   place,
+  fixed,
+  onMove,
   onStart,
   onGo,
   onClose,
@@ -215,6 +219,10 @@ export function PinCard({
   detail?: string;
   /** A named place tapped on the map, not a spot. */
   place?: boolean;
+  /** Riders moved it here. */
+  fixed?: boolean;
+  /** Offered for the places we draw: move its pin to where it really is. */
+  onMove?: () => void;
   onStart: (e: End) => void;
   onGo: (e: End) => void;
   onClose: () => void;
@@ -240,6 +248,50 @@ export function PinCard({
         onClose={onClose}
       />
       <EndActions end={end} onStart={onStart} onGo={onGo} />
+      {onMove && (
+        <p className="card-foot">
+          {fixed && "A rider put it here. "}
+          <button type="button" className="link-btn" onClick={onMove}>
+            Wrong spot? Move it
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Moving a place's pin to where it really is: drag the pin or tap the map, then save. */
+export function MoveCard({
+  place,
+  to,
+  saving,
+  onSave,
+  onCancel,
+}: {
+  place: MorePlace;
+  /** Where the pin is now, once moved; null until then. */
+  to: LngLat | null;
+  saving: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const problem = to ? moveProblem(place, to) : null;
+  // Short enough that Save shows with the sheet down and the map, where the pin is, in view.
+  const status = !to
+    ? "Drag the pin onto its building, or tap the map where it really is."
+    : (problem ?? `${metres(distance(place.at, to))} from where it was. Save it, or move it again.`);
+  return (
+    <div className="card rise">
+      <CardHead title={`Move ${place.name}`} sub={<span role="status">{status}</span>} onClose={onCancel} />
+      <div className="end-actions">
+        <button type="button" className="btn primary" disabled={!to || !!problem || saving} onClick={onSave}>
+          {saving ? "Saving…" : "Save this spot"}
+        </button>
+        <button type="button" className="btn" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      <p className="fine">Everyone sees the new spot. Anyone can move it again if it&apos;s still wrong.</p>
     </div>
   );
 }

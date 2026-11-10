@@ -8,14 +8,15 @@ function clientKey(): string {
 
 /**
  * Queue a contribution to the local outbox (works offline) and attempt an immediate flush.
- * Returns whether it was pushed to the server now or is waiting for connectivity.
+ * Returns whether it was pushed to the server now or is waiting for connectivity, and whether
+ * the server refused something it was sent (`refused`).
  */
 export async function submitContribution(
   kind: QueuedContribution["kind"],
   target_id: string | null,
   payload: Record<string, unknown>,
   note?: string
-): Promise<{ queued: true; pushed: boolean }> {
+): Promise<{ queued: true; pushed: boolean; refused: boolean }> {
   await enqueue({
     client_key: clientKey(),
     kind,
@@ -25,11 +26,13 @@ export async function submitContribution(
     created_at: Date.now(),
   });
   let pushed = false;
+  let refused = false;
   try {
     const res = await flush();
     pushed = res.pushed > 0;
+    refused = res.refused > 0;
   } catch {
     pushed = false;
   }
-  return { queued: true, pushed };
+  return { queued: true, pushed, refused };
 }

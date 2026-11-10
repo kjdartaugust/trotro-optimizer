@@ -16,17 +16,12 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 
 from .. import fareboard
 from ..config import settings
+from ..limits import address as _address
 
 router = APIRouter(prefix="/fareboards", tags=["crowdsourcing"])
 
 _by_address: dict[str, deque[float]] = defaultdict(deque)
 _all: deque[float] = deque()
-
-
-def _address(request: Request) -> str:
-    # Behind Render's proxy the rider's address is the first in X-Forwarded-For.
-    fwd = request.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() or (request.client.host if request.client else "unknown")
 
 
 def _allow(address: str, now: float) -> bool:

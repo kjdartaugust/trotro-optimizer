@@ -11,21 +11,29 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
-from .models import RetiredRow, Route, RouteStop, Station
+from .models import PlaceFix, RetiredRow, Route, RouteStop, Station
 from .routing.engine import Graph, RouteStopT, RouteT, StationT, build_graph
 
 _cache: dict[str, tuple[int, Graph]] = {}
 
 
-async def dataset_version(db: AsyncSession) -> int:
+async def network_version(db: AsyncSession) -> int:
+    """The newest change to what trips are planned on: stations, routes, retirements."""
     sv = (await db.execute(select(func.max(Station.version)))).scalar() or 0
     rv = (await db.execute(select(func.max(Route.version)))).scalar() or 0
     xv = (await db.execute(select(func.max(RetiredRow.version)))).scalar() or 0
     return max(sv, rv, xv)
 
 
+async def dataset_version(db: AsyncSession) -> int:
+    """The sync cursor: the newest change of anything devices hold, riders' pin moves too."""
+    pv = (await db.execute(select(func.max(PlaceFix.version)))).scalar() or 0
+    return max(await network_version(db), pv)
+
+
 async def load_graph(db: AsyncSession) -> Graph:
-    version = await dataset_version(db)
+    # Not dataset_version: a pin moved on the map changes no trip, so the graph isn't rebuilt.
+    version = await network_version(db)
     cached = _cache.get("graph")
     if cached and cached[0] == version:
         return cached[1]

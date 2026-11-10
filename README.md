@@ -13,7 +13,8 @@ fare and time — built on community data and working fully offline.
   leg + total. The network is modelled as a weighted graph (stations = nodes, route segments =
   edges) and solved with a multi-criteria Dijkstra. The same algorithm runs on the server
   (Python) and in the browser (TypeScript) so results are identical online and offline.
-- **Crowdsourcing** — Users submit and correct routes, fares, and station locations. Fare
+- **Crowdsourcing** — Users submit and correct routes, fares, and station locations, and move a
+  place's pin to where it really is. Fare
   changes (fuel-price driven) propagate through community reports with **trust/verification
   scoring** and a **moderation queue**. Contributions are auto-applied once they cross a
   confidence threshold; otherwise a moderator reviews them. A photo of a station's **fare board**
@@ -149,9 +150,9 @@ npm run dev
 | `POST` | `/contributions/{id}/vote` | user | up/down-vote a contribution |
 | `GET`  | `/moderation/queue` | mod | pending contributions |
 | `POST` | `/moderation/{id}/decision` | mod | approve/reject |
-| `GET`  | `/sync/dataset` | – | full offline snapshot (versioned) |
-| `GET`  | `/sync/changes?since=` | – | deltas since a version cursor |
-| `POST` | `/sync/push` | user | push queued offline contributions |
+| `GET`  | `/sync/dataset` | – | full offline snapshot (versioned), riders' pin moves too |
+| `GET`  | `/sync/changes?since=` | – | deltas since a version cursor, riders' pin moves too |
+| `POST` | `/sync/push` | user | push queued offline contributions (an item it won't take is skipped, `refused`) |
 | `GET`  | `/fareboards/status` | – | whether this server can read fare board photos |
 | `POST` | `/fareboards/read` | – | read a fare board photo (multipart `photo`) into rows; not stored |
 
@@ -225,8 +226,19 @@ out unless OSM has it: about a quarter of Overture's Accra listings share their 
 other businesses (293 on 5.55, -0.2, "Accra"; 51 on "Spintex Road"), give a coarse point, or are
 just a town's name. No place beats a pin in the wrong spot. Search merges the two the same way,
 keeping the name that was typed. It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 11,949 places,
-6,626 with a street, ~310 KB over the wire. The app loads it after the network and the service
+6,626 with a street, ~320 KB over the wire. The app loads it after the network and the service
 worker keeps it, so search finds them offline.
+
+**Riders fix the rest.** A listing on its own can sit on the wrong spot too, and no data rule
+finds it: Overture's Zoomlion sat 13 m from its road, as real roadside shops do. So any place the
+app draws can be moved: tap it, "Wrong spot? Move it", drag the pin onto its building (or tap
+where it is) and save. The move shows on that phone at once, offline too, and on every other
+phone at its next sync. Like an OpenStreetMap edit it applies straight away (a `place`
+contribution; `PLACE_FIXES_AUTO_APPLY=false` sends moves to the moderation queue instead):
+anyone can move it again, every move is kept as a contribution, a pin moves at most 3 km from
+the places file's spot (`PLACE_FIX_MAX_M`), and one address moves at most 30 an hour
+(`PLACE_FIXES_PER_HOUR`). Moves earn no trust. A move belongs to the place of that name nearest
+the file's spot, so it survives the monthly rebuild of `places.json`.
 
 ```bash
 pip install overturemaps                 # only for this script, not the server
@@ -269,7 +281,8 @@ Each user has a `trust_score` (0–100). A contribution's weight = f(reporter tr
 votes, recency). When weighted confidence ≥ `AUTO_APPROVE_THRESHOLD` the change is applied and
 the underlying record's `verified` flag/`confidence` is updated; otherwise it enters the
 moderation queue. Approvals raise the reporter's trust; rejections lower it. Fare reports are
-time-decayed so fuel-price jumps converge quickly on the new consensus.
+time-decayed so fuel-price jumps converge quickly on the new consensus. A place's pin moved by a
+rider is the exception: it applies at once and earns no trust (see Places).
 
 ## Deployment
 
