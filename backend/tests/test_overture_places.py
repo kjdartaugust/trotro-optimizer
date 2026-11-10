@@ -93,6 +93,9 @@ def test_keeps_sure_open_places_in_the_area_once_each():
     # OpenStreetMap already draws these: under the same name, or a shorter one close by.
     assert places["Kaneshie Market"][7] == 1
     assert places["Melcom Spintex"][7] == 1
+    # The same name sits where OSM puts it; a shorter OSM name ("Melcom") may be what it's inside.
+    assert places["Kaneshie Market"][:2] == [-0.2362, 5.5703]
+    assert places["Melcom Spintex"][:2] == [-0.2349, 5.5701]
 
 
 def test_streets_worth_showing():
@@ -129,3 +132,7 @@ def test_the_same_place_in_both_lists_shows_once_under_the_plainer_name():
     assert data["hide_osm"] == ["Zoomlion Ghana Limited Headquarters"]
     assert places["Zoomlion Ghana Limited"][7] == 0  # drawn
     assert data["streets"][places["Zoomlion Ghana Limited"][8]] == "University Farm Rd"
+    # ... on the building, where OSM puts it, not on the street of its address.
+    assert places["Zoomlion Ghana Limited"][:2] == [-0.11336, 5.67195]
+    # A fuller OSM name used twice isn't hidden, but the place still moves onto the nearer copy.
+    assert places["Star Oil Ghana"][:2] == [-0.2350, 5.5702]

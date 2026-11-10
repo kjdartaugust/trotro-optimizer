@@ -90,7 +90,7 @@ let loading: Promise<MorePlaces | null> | null = null;
 
 /** The places file, once per page; null while offline before it was ever cached. */
 export function loadMorePlaces(): Promise<MorePlaces | null> {
-  loading ??= fetch("/network/places.json")
+  loading ??= fetch(`/network/places.json?v=${process.env.NEXT_PUBLIC_PLACES_VERSION ?? ""}`)
     .then((r) => (r.ok ? (r.json() as Promise<Raw>) : null))
     .then((raw) => (raw ? parseMorePlaces(raw) : null))
     .catch(() => null)

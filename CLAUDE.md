@@ -141,7 +141,11 @@ tier per place, street from Overture's address when it names a road or building 
 A place in both lists shows once, the plainer name: `on_osm_map` where OSM has the same name (or a
 shorter one inside Overture's); `hide_osm` (OSM names the app filters out of the tiles' layers,
 `mapPlaces.osmFilter`) where OSM's is Overture's and more, only for names OSM uses once in the
-area. Rebuild it monthly (Overture's releases) or after the network's area changes. Credit
+area. Under the same name or a fuller one, the place also takes OSM's spot (mappers put it on the
+building; Overture's Zoomlion sat on the road); under a shorter one (a market, a mall) it keeps its
+own. The app fetches `places.json?v=<hash>` (`next.config.mjs`), so a new file arrives with the app
+that reads it, not a cached one a visit later. Rebuild it monthly (Overture's releases) or after the
+network's area changes. Credit
 "Overture Maps Foundation" wherever places show. The theme switch uses `setStyle(..., {diff:
 false})`: a diffed style drops our layers with no `style.load` to re-add them.
 
