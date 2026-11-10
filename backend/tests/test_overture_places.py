@@ -74,10 +74,10 @@ def test_keeps_sure_open_places_in_the_area_once_each():
         row("Unsure Shop", -0.114, 5.672, 0.3, "shopping"),
         row("Closed Bar", -0.115, 5.671, 0.9, "bar", status="permanently_closed"),
         row("Ho Market", 0.47, 6.6, 0.9, "market"),  # far outside the trotro area
-        row("Melcom Spintex", -0.2349, 5.5701, 0.8, "department_store"),
-        row("Kaneshie Market", -0.2361, 5.5702, 0.95, "market"),
+        row("Melcom Spintex", -0.23491, 5.57012, 0.8, "department_store"),
+        row("Kaneshie Market", -0.23611, 5.57021, 0.95, "market"),
     ]
-    osm = [(-0.2350, 5.5702, "Melcom"), (-0.2362, 5.5703, "Kaneshie Market")]
+    osm = [(-0.23502, 5.57023, "Melcom"), (-0.23622, 5.57031, "Kaneshie Market")]
     data = build(rows, osm, STATIONS, "2026-10-21.0")
 
     assert data["source"] == "Overture Maps Foundation, release 2026-10-21.0, CDLA Permissive 2.0"
@@ -94,8 +94,8 @@ def test_keeps_sure_open_places_in_the_area_once_each():
     assert places["Kaneshie Market"][7] == 1
     assert places["Melcom Spintex"][7] == 1
     # The same name sits where OSM puts it; a shorter OSM name ("Melcom") may be what it's inside.
-    assert places["Kaneshie Market"][:2] == [-0.2362, 5.5703]
-    assert places["Melcom Spintex"][:2] == [-0.2349, 5.5701]
+    assert places["Kaneshie Market"][:2] == [-0.23622, 5.57031]
+    assert places["Melcom Spintex"][:2] == [-0.23491, 5.57012]
 
 
 def test_streets_worth_showing():
@@ -118,14 +118,14 @@ def test_streets_worth_showing():
 def test_the_same_place_in_both_lists_shows_once_under_the_plainer_name():
     rows = [
         row("Zoomlion Ghana Limited", -0.11304, 5.67345, 0.91, "public_utility", address="University Farm Rd"),
-        row("Star Oil Ghana", -0.2349, 5.5701, 0.8, "gas_station"),
+        row("Star Oil Ghana", -0.23491, 5.57012, 0.8, "gas_station"),
     ]
     osm = [
         # OSM's building, 171 m away, under the same name and more: Overture's plainer name shows.
-        (-0.11336, 5.67195, "Zoomlion Ghana Limited Headquarters"),
+        (-0.113368, 5.671932, "Zoomlion Ghana Limited Headquarters"),
         # A name OSM uses twice can't be hidden by name without hiding both.
-        (-0.2350, 5.5702, "Star Oil Ghana Filling Station"),
-        (-0.3000, 5.6000, "Star Oil Ghana Filling Station"),
+        (-0.23502, 5.57023, "Star Oil Ghana Filling Station"),
+        (-0.30001, 5.60002, "Star Oil Ghana Filling Station"),
     ]
     data = build(rows, osm, STATIONS, "2026-10-21.0")
     places = {p[2]: p for p in data["places"]}
@@ -133,6 +133,31 @@ def test_the_same_place_in_both_lists_shows_once_under_the_plainer_name():
     assert places["Zoomlion Ghana Limited"][7] == 0  # drawn
     assert data["streets"][places["Zoomlion Ghana Limited"][8]] == "University Farm Rd"
     # ... on the building, where OSM puts it, not on the street of its address.
-    assert places["Zoomlion Ghana Limited"][:2] == [-0.11336, 5.67195]
+    assert places["Zoomlion Ghana Limited"][:2] == [-0.11337, 5.67193]
     # A fuller OSM name used twice isn't hidden, but the place still moves onto the nearer copy.
-    assert places["Star Oil Ghana"][:2] == [-0.2350, 5.5702]
+    assert places["Star Oil Ghana"][:2] == [-0.23502, 5.57023]
+
+
+def test_a_spot_several_businesses_share_is_a_guess_and_left_out():
+    rows = [
+        # Listings that only said "Accra": all on one point, the city's middle.
+        row("Kofi Chop Bar", -0.2, 5.55, 0.9, "restaurant"),
+        row("Ama Hair Salon", -0.2, 5.55, 0.9, "beauty_salon"),
+        row("Zoomlion Ghana Limited", -0.2, 5.55, 0.9, "public_utility"),  # OSM has it near: moved there
+        # Shops on their mall's spot, as their address says: kept.
+        row("Shoe Box", -0.17322, 5.62211, 0.9, "shoe_store", address="Accra Mall, Spintex Road"),
+        row("Phone World", -0.17322, 5.62211, 0.9, "mobile_phone_store", address="Accra Mall, Spintex Road"),
+        # A spot given to 4 decimals or fewer is typed in or an area's middle, not a GPS fix.
+        row("Lone Guess", -0.1231, 5.6112, 0.9, "shopping"),
+        row("Real Spot", -0.12345, 5.61234, 0.9, "shopping"),
+        # The area's own page, put anywhere: not a place in it.
+        row("Nmai Dzorm", -0.12011, 5.61022, 0.9, "landmark_and_historical_building"),
+        # OSM's copy on a typed-in spot doesn't move it.
+        row("Sacred Heart Church", -0.15011, 5.60033, 0.9, "church_cathedral"),
+    ]
+    osm = [(-0.20081, 5.55042, "Zoomlion Ghana Limited"), (-0.1502, 5.6004, "Sacred Heart Church")]
+    data = build(rows, osm, STATIONS, "2026-10-21.0")
+    places = {p[2]: p for p in data["places"]}
+    assert set(places) == {"Zoomlion Ghana Limited", "Shoe Box", "Phone World", "Real Spot", "Sacred Heart Church"}
+    assert places["Zoomlion Ghana Limited"][:2] == [-0.20081, 5.55042]
+    assert places["Sacred Heart Church"][:2] == [-0.15011, 5.60033]

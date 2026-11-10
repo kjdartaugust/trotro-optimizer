@@ -143,7 +143,10 @@ shorter one inside Overture's); `hide_osm` (OSM names the app filters out of the
 `mapPlaces.osmFilter`) where OSM's is Overture's and more, only for names OSM uses once in the
 area. Under the same name or a fuller one, the place also takes OSM's spot (mappers put it on the
 building; Overture's Zoomlion sat on the road); under a shorter one (a market, a mall) it keeps its
-own. The app fetches `places.json?v=<hash>` (`next.config.mjs`), so a new file arrives with the app
+own. A guessed spot is left out unless OSM has the place: a point several different businesses
+share (an area or street turned into a point: 293 listings sat on 5.55, -0.2 "Accra"; kept when
+most give the same venue address), a coarse one (4 decimals or fewer), and listings named just a
+town ("Nungua"). OSM's spot only counts when it isn't coarse or shared either. The app fetches `places.json?v=<hash>` (`next.config.mjs`), so a new file arrives with the app
 that reads it, not a cached one a visit later. Rebuild it monthly (Overture's releases) or after the
 network's area changes. Credit
 "Overture Maps Foundation" wherever places show. The theme switch uses `setStyle(..., {diff:

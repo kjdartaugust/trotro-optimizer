@@ -220,9 +220,12 @@ under the plainer name: OpenStreetMap's when the names are the same (its tiles d
 still finds Overture's copy offline), Overture's when OSM's is the same name and more
 ("Zoomlion Ghana Limited" and OSM's "Zoomlion Ghana Limited Headquarters", 171 m apart: OSM's
 is left off the map by name). Either way it sits where OSM puts it, on the building (Overture's
-Zoomlion listing sat on University Farm Rd, 171 m from it). Search merges the two the same way,
-keeping the name that was typed. It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 16,171 places,
-8,580 with a street, ~330 KB over the wire. The app loads it after the network and the service
+Zoomlion listing sat on University Farm Rd, 171 m from it). A listing on a guessed spot is left
+out unless OSM has it: about a quarter of Overture's Accra listings share their exact point with
+other businesses (293 on 5.55, -0.2, "Accra"; 51 on "Spintex Road"), give a coarse point, or are
+just a town's name. No place beats a pin in the wrong spot. Search merges the two the same way,
+keeping the name that was typed. It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 11,949 places,
+6,626 with a street, ~310 KB over the wire. The app loads it after the network and the service
 worker keeps it, so search finds them offline.
 
 ```bash
