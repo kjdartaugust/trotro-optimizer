@@ -17,7 +17,15 @@ import maplibregl, {
   type PaddingOptions,
 } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import { morePlaceLayers, osmPlaceLayers, PLACE_LAYERS, placeName, placesBefore } from "@/lib/mapPlaces";
+import {
+  morePlaceLayers,
+  OSM_PLACE_LAYERS,
+  osmFilter,
+  osmPlaceLayers,
+  PLACE_LAYERS,
+  placeName,
+  placesBefore,
+} from "@/lib/mapPlaces";
 import type { LngLat } from "@/lib/shapes";
 import type { ApiStation } from "@/lib/types";
 
@@ -210,6 +218,7 @@ export default function TripMap({
   network,
   stops,
   places,
+  hiddenOsm,
   drawn,
   from,
   to,
@@ -228,6 +237,8 @@ export default function TripMap({
   stops: ApiStation[];
   /** Overture's places (lib/morePlaces.ts), once loaded. */
   places: GeoJSON.FeatureCollection | null;
+  /** OpenStreetMap places not to draw: Overture has them under a plainer name. */
+  hiddenOsm: string[];
   /** The open trip or line; null for the plain network. */
   drawn: Drawn | null;
   from: LngLat | null;
@@ -251,8 +262,8 @@ export default function TripMap({
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
   const markers = useRef<Partial<Record<"from" | "to" | "me", Marker>>>({});
-  const data = useRef({ network, stops, places, drawn });
-  data.current = { network, stops, places, drawn };
+  const data = useRef({ network, stops, places, hiddenOsm, drawn });
+  data.current = { network, stops, places, hiddenOsm, drawn };
   const handlers = useRef({ onTap, onStop, onLines, onMoved, picking });
   handlers.current = { onTap, onStop, onLines, onMoved, picking };
   const pad = useRef(padding);
@@ -276,7 +287,7 @@ export default function TripMap({
     for (const l of lineLayers(dark, !!data.current.drawn)) if (!m.getLayer(l.id)) m.addLayer(l, firstLabel);
     // Places over the lines, under the street and town names; our stops over everything.
     const beforePlaces = placesBefore(layers, lastShape);
-    for (const l of [...osmPlaceLayers(dark), ...morePlaceLayers(dark)]) {
+    for (const l of [...osmPlaceLayers(dark, data.current.hiddenOsm), ...morePlaceLayers(dark)]) {
       if (!m.getLayer(l.id)) m.addLayer(l, beforePlaces);
     }
     for (const l of pointLayers(dark)) if (!m.getLayer(l.id)) m.addLayer(l);
@@ -417,6 +428,11 @@ export default function TripMap({
   useEffect(() => {
     (map.current?.getSource("places") as GeoJSONSource | undefined)?.setData(places ?? EMPTY);
   }, [places]);
+
+  useEffect(() => {
+    const m = map.current;
+    for (const id of OSM_PLACE_LAYERS) if (m?.getLayer(id)) m.setFilter(id, osmFilter(id, hiddenOsm));
+  }, [hiddenOsm]);
 
   useEffect(() => {
     const m = map.current;

@@ -214,11 +214,15 @@ OpenStreetMap knows few of Accra's businesses, so the map and search also use
 business listings and refreshed monthly. `app/etl/overture_places.py` takes the ones in the
 network's area (the stops' bounds plus ~10 km) that Overture is fairly sure of (confidence
 ≥ 0.5), merges a place listed twice, gives each a kind (a label for search, a map icon) and a
-tier (the zoom it shows from), names its area after the nearest stop's town, and marks the ones
-OpenStreetMap's tiles already draw, so the map doesn't show a place twice (search still finds
-them offline). It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 16,172
-places, ~250 KB over the wire. The app loads it after the network and the service worker keeps
-it, so search finds them offline.
+tier (the zoom it shows from), keeps its street when Overture's address names one ("University
+Farm Rd"), and names its area after the nearest stop's town. A place in both lists shows once,
+under the plainer name: OpenStreetMap's when the names are the same (its tiles draw it; search
+still finds Overture's copy offline), Overture's when OSM's is the same name and more
+("Zoomlion Ghana Limited" and OSM's "Zoomlion Ghana Limited Headquarters", 171 m apart: OSM's
+is left off the map by name). Search merges the two the same way, keeping the name that was
+typed. It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 16,171 places,
+8,580 with a street, ~330 KB over the wire. The app loads it after the network and the service
+worker keeps it, so search finds them offline.
 
 ```bash
 pip install overturemaps                 # only for this script, not the server

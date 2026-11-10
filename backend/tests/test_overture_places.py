@@ -1,14 +1,14 @@
 """Overture's places -> the app's places file (app/etl/overture_places.py), on made-up rows."""
 import struct
 
-from app.etl.overture_places import build, clean_name, kind_of, point, squash, tier_of
+from app.etl.overture_places import build, clean_name, kind_of, point, squash, street_of, tier_of
 
 
 def wkb(lon: float, lat: float) -> bytes:
     return struct.pack("<BIdd", 1, 1, lon, lat)
 
 
-def row(name, lon, lat, conf=0.9, basic=None, top=None, status=None):
+def row(name, lon, lat, conf=0.9, basic=None, top=None, status=None, address=None):
     return {
         "names": {"primary": name},
         "confidence": conf,
@@ -16,6 +16,7 @@ def row(name, lon, lat, conf=0.9, basic=None, top=None, status=None):
         "geometry": wkb(lon, lat),
         "basic_category": basic,
         "taxonomy": {"primary": basic, "hierarchy": [top, basic]} if top else None,
+        "addresses": [{"freeform": address, "country": "GH"}] if address else None,
     }
 
 
@@ -83,12 +84,48 @@ def test_keeps_sure_open_places_in_the_area_once_each():
     places = {p[2]: p for p in data["places"]}
     assert set(places) == {"Zoomlion Ghana Limited", "Melcom Spintex", "Kaneshie Market"}
 
-    lon, lat, name, kind, tier, town, sure, on_osm = places["Zoomlion Ghana Limited"]
+    lon, lat, name, kind, tier, town, sure, on_osm, street = places["Zoomlion Ghana Limited"]
     assert (lon, lat) == (-0.11304, 5.67345)  # the surer copy
     assert data["kinds"][kind] == ["Utility", "office"]
     assert data["towns"][town] == "Nmai Dzorm"
-    assert (tier, sure, on_osm) == (2, 91, 0)
+    assert (tier, sure, on_osm, street) == (2, 91, 0, -1)
 
     # OpenStreetMap already draws these: under the same name, or a shorter one close by.
     assert places["Kaneshie Market"][7] == 1
     assert places["Melcom Spintex"][7] == 1
+
+
+def test_streets_worth_showing():
+    def street(address, name="Somewhere"):
+        return street_of({"addresses": [{"freeform": address, "country": "GH"}]}, name)
+
+    assert street("University Farm Rd") == "University Farm Rd"
+    assert street("GPCQ+VH3, Armah Polisi Street") == "Armah Polisi Street"
+    assert street("Digital Address: CG-0112-1330 Kasoa Rd") == "Kasoa Rd"
+    assert street("kokrobite road bortianor") == "Kokrobite Road Bortianor"
+    assert street("393 Mallam Gbawe road, first floor Joscom grocery store building. GPS GS - 0141 - 4047") == (
+        "393 Mallam Gbawe road"
+    )
+    assert street("Damerko company limited") == ""  # names no road or building
+    assert street("Kasoa") == ""
+    assert street("Spintex Road", name="Spintex Road") == ""  # just its own name again
+    assert street_of({"addresses": None}, "x") == ""
+
+
+def test_the_same_place_in_both_lists_shows_once_under_the_plainer_name():
+    rows = [
+        row("Zoomlion Ghana Limited", -0.11304, 5.67345, 0.91, "public_utility", address="University Farm Rd"),
+        row("Star Oil Ghana", -0.2349, 5.5701, 0.8, "gas_station"),
+    ]
+    osm = [
+        # OSM's building, 171 m away, under the same name and more: Overture's plainer name shows.
+        (-0.11336, 5.67195, "Zoomlion Ghana Limited Headquarters"),
+        # A name OSM uses twice can't be hidden by name without hiding both.
+        (-0.2350, 5.5702, "Star Oil Ghana Filling Station"),
+        (-0.3000, 5.6000, "Star Oil Ghana Filling Station"),
+    ]
+    data = build(rows, osm, STATIONS, "2026-10-21.0")
+    places = {p[2]: p for p in data["places"]}
+    assert data["hide_osm"] == ["Zoomlion Ghana Limited Headquarters"]
+    assert places["Zoomlion Ghana Limited"][7] == 0  # drawn
+    assert data["streets"][places["Zoomlion Ghana Limited"][8]] == "University Farm Rd"

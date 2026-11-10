@@ -68,6 +68,7 @@ type Result =
 const ACCESS_M = DEFAULT_OPTS.accessRadiusM;
 // Where the map opens (TripMap's ACCRA): places are found nearest here until the map moves.
 const START_VIEW: LngLat = [-0.205, 5.6];
+const NO_NAMES: string[] = [];
 
 export default function Home() {
   const [net, setNet] = useState<Network | null>(null);
@@ -262,7 +263,7 @@ export default function Home() {
   function tapped(at: LngLat, place?: TappedPlace) {
     // A place on the map has its name already; a bare spot is named by asking Photon.
     const known = place?.i !== undefined ? more?.list[place.i] : undefined;
-    const detail = known ? detailOf(known) : undefined;
+    const detail = known ? detailOf(known, true) : undefined;
     if (panel.kind === "pick") {
       const field = panel.field;
       if (place) {
@@ -469,6 +470,7 @@ export default function Home() {
         network={network}
         stops={net?.stations ?? []}
         places={more?.geojson ?? null}
+        hiddenOsm={more?.hideOsm ?? NO_NAMES}
         drawn={drawn}
         from={from?.at ?? null}
         to={to?.at ?? null}

@@ -63,19 +63,32 @@ export function nameMatch(name: string, q: string): number {
   return 2;
 }
 
-// Two results with the same name closer than this are one place: "Accra Mall", its car park and
-// its bus stop are one place to a person.
+// Two results closer than this are one place when they share a name, or one's name is the other's
+// and more: "Accra Mall" and its car park; "Zoomlion Ghana Limited" and OpenStreetMap's
+// "Zoomlion Ghana Limited Headquarters", 171 m apart.
 const SAME_PLACE_M = 300;
+// Letters a name needs before "the other's name holds it" means the same place ("Shell" isn't enough).
+const CORE_MIN = 8;
 
-/** Best match first; among equals, the nearest. The same name in the same spot appears once. */
+function samePlace(a: { sq: string; at: LngLat }, b: { sq: string; at: LngLat }): boolean {
+  if (distance(a.at, b.at) >= SAME_PLACE_M) return false;
+  if (a.sq === b.sq) return true;
+  const [short, long] = a.sq.length <= b.sq.length ? [a.sq, b.sq] : [b.sq, a.sq];
+  return short.length >= CORE_MIN && long.includes(short);
+}
+
+/** Best match first; among equals, the nearest. A place found twice appears once: as the name
+ *  that is what was typed, else the better match, else the plainer (shorter) name. */
 export function rankPlaces(found: Place[], q: string, near: LngLat): Place[] {
-  const kept: Place[] = [];
-  for (const p of found) {
-    const name = fold(p.name);
-    if (!kept.some((k) => fold(k.name) === name && distance(k.at, p.at) < SAME_PLACE_M)) kept.push(p);
-  }
+  const want = squash(q);
+  const all = found.map((p, i) => ({ p, i, sq: squash(p.name), at: p.at, tier: nameMatch(p.name, q) }));
+  const preferred = [...all].sort(
+    (a, b) => +(b.sq === want) - +(a.sq === want) || a.tier - b.tier || a.sq.length - b.sq.length || a.i - b.i
+  );
+  const kept: typeof all = [];
+  for (const c of preferred) if (!kept.some((k) => samePlace(k, c))) kept.push(c);
   return kept
-    .map((p, i) => ({ p, i, tier: nameMatch(p.name, q), m: distance(near, p.at) }))
+    .map((c) => ({ ...c, m: distance(near, c.at) }))
     .sort((a, b) => a.tier - b.tier || a.m - b.m || a.i - b.i)
     .map(({ p }) => p);
 }
