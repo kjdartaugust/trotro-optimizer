@@ -279,6 +279,10 @@ STREETISH = re.compile(
     r"house|tower|centre|center|estate|court|terrace|row)\b",
     re.I,
 )
+# A spot several businesses share is the venue's own when their address names one (a mall's shops).
+VENUE = re.compile(
+    r"\b(mall|market|plaza|complex|tower|building|house|centre|center|hospital|university|hotel)\b", re.I
+)
 
 
 def street_of(row: dict, name: str) -> str:
@@ -401,8 +405,15 @@ def read_osm(path: Path | None, bbox: tuple[float, float, float, float]) -> list
     return out
 
 
+def coarse(lon: float, lat: float) -> bool:
+    """A spot given to 4 decimals or fewer (~10 m grid): typed in or an area's middle, not a GPS fix."""
+    return round(lon, 4) == lon and round(lat, 4) == lat
+
+
 def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[dict], release: str) -> dict:
     w, s, e, n = area(stations)
+    # A listing named just "Nungua" or "Adabraka" is the area's page, put anywhere: not a place in it.
+    town_keys = {squash(st["town"]) for st in stations if st.get("town")}
 
     # 1. Sure enough, named, open, inside the area.
     keep = []
@@ -413,7 +424,7 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
         at = point(row.get("geometry"))
         if at is None and row.get("bbox"):
             at = (row["bbox"]["xmin"], row["bbox"]["ymin"])
-        if conf < MIN_CONFIDENCE or not name or not squash(name) or at is None:
+        if conf < MIN_CONFIDENCE or not name or not squash(name) or at is None or squash(name) in town_keys:
             continue
         if status not in (None, "open"):
             continue
@@ -434,6 +445,21 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
         grid.add(p["lon"], p["lat"], p)
         places.append(p)
 
+    # 2b. A spot several different businesses share exactly is a guess: an area or a street turned
+    #     into one point (293 listings sat on 5.55, -0.2, "Accra"; 51 on "Spintex Road"), as is a
+    #     coarse one. Unless OpenStreetMap has the place (step 3 moves it there), it's left out: no
+    #     place beats a pin in the wrong spot. A venue's address keeps its shops.
+    at_point: dict[tuple[float, float], list[dict]] = defaultdict(list)
+    for p in places:
+        at_point[(round(p["lon"], 6), round(p["lat"], 6))].append(p)
+    for (lon, lat), here in at_point.items():
+        shared = len({q["key"] for q in here}) >= 2
+        top, times_given = Counter(q["street"] for q in here).most_common(1)[0]
+        # Most of them (2 or more) give the same venue.
+        venue = top and times_given >= 2 and times_given * 2 >= len(here) and VENUE.search(top)
+        for q in here:
+            q["guessed"] = bool(shared and not venue) or coarse(lon, lat)
+
     # 3. The same place in OpenStreetMap? The map shows one of the two, the plainer name:
     #    the same name -> OSM's (its tiles draw it); OSM's is shorter -> OSM's; Overture's is shorter
     #    ("Zoomlion Ghana Limited" vs OSM's "... Headquarters") -> Overture's, and OSM's is hidden by
@@ -442,32 +468,52 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
     #    it on the building, while a listing can sit on its address's street (Zoomlion Ghana Limited
     #    was on University Farm Rd, 171 m from its building). A shorter OSM name is often what it is
     #    inside (a market, a mall), so a place keeps its own spot then.
+    #    OSM's own spot only counts when it's a real one: not coarse, not shared by other names.
     osm_grid = Grid()
     times = Counter(name for _, _, name in osm)
+    names_at: dict[tuple[float, float], set[str]] = defaultdict(set)
+    for lon, lat, name in osm:
+        names_at[(round(lon, 6), round(lat, 6))].add(name)
     for lon, lat, name in osm:
         k = squash(name)
         if k:
-            osm_grid.add(lon, lat, (k, name, lon, lat))
+            real = len(names_at[(round(lon, 6), round(lat, 6))]) == 1 and not coarse(lon, lat)
+            osm_grid.add(lon, lat, (k, name, lon, lat, real))
     longer_in_osm: dict[int, set[str]] = defaultdict(set)
     moved = 0
     for i, p in enumerate(places):
         p["osm"] = False
         spots = []  # OSM's copy under the same name (0) or a fuller one (1): (which, metres, lon, lat)
-        for d, (k, name, lon, lat) in osm_grid.near(p["lon"], p["lat"], ONE_PLACE_M):
+        for d, (k, name, lon, lat, real) in osm_grid.near(p["lon"], p["lat"], ONE_PLACE_M):
             if k == p["key"]:
                 if d <= OSM_SAME_M:
                     p["osm"] = True
-                    spots.append((0, d, lon, lat))
+                    if real:
+                        spots.append((0, d, lon, lat))
             elif k in p["key"] and (len(k) >= CORE_MIN or (d <= OSM_PART_M and len(k) >= 5)):
                 p["osm"] = True
             elif p["key"] in k and len(p["key"]) >= CORE_MIN:
-                spots.append((1, d, lon, lat))
+                if real:
+                    spots.append((1, d, lon, lat))
                 if times[name] == 1:
                     longer_in_osm[i].add(name)
         if spots:
             _, d, p["lon"], p["lat"] = min(spots)
             moved += d > 0
-    hide_osm = sorted({n for i, names in longer_in_osm.items() if not places[i]["osm"] for n in names})
+            p["guessed"] = False
+    hide_osm = sorted({
+        n for i, names in longer_in_osm.items() if not places[i]["osm"] and not places[i]["guessed"] for n in names
+    })
+    guessed = sum(p["guessed"] for p in places)
+    # Two listings of one name moved onto the same OSM place are one place.
+    seen: set[tuple[str, float, float]] = set()
+    kept = []
+    for p in places:
+        spot = (p["key"], round(p["lon"], 6), round(p["lat"], 6))
+        if not p["guessed"] and spot not in seen:
+            seen.add(spot)
+            kept.append(p)
+    places = kept
 
     # 4. The area to name in search: the nearest stop's town.
     stop_grid = Grid()
@@ -489,9 +535,10 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
 
     log.info(
         "%d Overture places: %d sure enough, %d after merging copies, %d also in OpenStreetMap, "
-        "%d OSM names hidden for a plainer Overture one, %d moved to OSM's spot, %d with a street",
-        len(rows), len(keep), len(places), sum(p["osm"] for p in places), len(hide_osm), moved,
-        sum(1 for p in places if p["street"]),
+        "%d OSM names hidden for a plainer Overture one, %d moved to OSM's spot, %d left out on a guessed "
+        "spot, %d kept, %d with a street",
+        len(rows), len(keep), len(places) + guessed, sum(p["osm"] for p in places), len(hide_osm), moved,
+        guessed, len(places), sum(1 for p in places if p["street"]),
     )
     return {
         "source": f"Overture Maps Foundation, release {release}, CDLA Permissive 2.0",
