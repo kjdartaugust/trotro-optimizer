@@ -125,7 +125,9 @@ then distance from the rider (`me`: only read silently when geolocation is alrea
 else the map's centre (`TripMap onMoved`). Never from a fixed point. No hits with a space in the
 query: retried without spaces ("Zoom lion"). Overture's places (`lib/morePlaces.ts`,
 `findMorePlaces`) answer first and offline; `SearchPanel` merges them with Photon's through
-`rankPlaces` (same name within 300 m = one place).
+`rankPlaces`: within 300 m, the same squashed name, or one name (8+ letters) inside the other, is
+one place, kept as the name typed, else the better match, else the shorter name ("Zoomlion Ghana
+Limited" over OSM's "... Headquarters", 171 m apart).
 
 **Places on the map** (`lib/mapPlaces.ts`): OpenStreetMap's POIs from the tiles' `poi` layer and
 Overture's from `public/network/places.json` (source `places`) share one look (icon by `class`,
@@ -135,8 +137,11 @@ under street/town names (`placesBefore`). Overture features carry the tiles' pro
 `["image", null]` (an error that hides the icon), hence `to-string`. Taps on a place give
 `onTap(at, {name, i})`. `places.json` is built by `app/etl/overture_places.py` (needs
 `pip install overturemaps`; not a server dependency): confidence ≥ 0.5, copies merged, kind and
-tier per place, `on_osm_map` set where OSM's tiles already draw it (not drawn again; still
-searched). Rebuild it monthly (Overture's releases) or after the network's area changes. Credit
+tier per place, street from Overture's address when it names a road or building (`street_of`).
+A place in both lists shows once, the plainer name: `on_osm_map` where OSM has the same name (or a
+shorter one inside Overture's); `hide_osm` (OSM names the app filters out of the tiles' layers,
+`mapPlaces.osmFilter`) where OSM's is Overture's and more, only for names OSM uses once in the
+area. Rebuild it monthly (Overture's releases) or after the network's area changes. Credit
 "Overture Maps Foundation" wherever places show. The theme switch uses `setStyle(..., {diff:
 false})`: a diffed style drops our layers with no `style.load` to re-add them.
 

@@ -4,9 +4,11 @@ the rest of Accra's places from Overture Maps, for the map and for search (offli
 OpenStreetMap, which the street tiles and online search use, knows few of Accra's businesses.
 Overture's places come from Meta, Microsoft and others' business listings, refreshed monthly. This
 keeps the ones Overture is fairly sure of (``MIN_CONFIDENCE``) inside the trotro network's area,
-merges the copies of one place, gives each a kind (label + map icon) and a tier (the zoom it shows
-from), and marks the ones OpenStreetMap already shows on the map, so the map doesn't draw a place
-twice; search still finds them offline.
+merges the copies of one place, gives each a kind (label + map icon), a tier (the zoom it shows
+from) and its street when the address names one. A place both lists have shows once on the map,
+under the plainer name: OSM's when the names match (``on_osm_map``; search still finds Overture's
+copy offline), Overture's when OSM's is the same name and more (``hide_osm``: "Zoomlion Ghana
+Limited" over OSM's "Zoomlion Ghana Limited Headquarters").
 
     pip install overturemaps                      # only for this script, not the server
     python -m app.etl.overture_places             # download both, write places.json
@@ -27,7 +29,7 @@ import math
 import re
 import struct
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import httpx
@@ -44,9 +46,12 @@ OUT = ROOT / "frontend" / "public" / "network" / "places.json"
 MIN_CONFIDENCE = 0.5  # Overture's own score; below it, many are closed, moved or duplicated
 MARGIN = 0.09  # degrees round the stops, as the app's place search (lib/network.ts areaOf)
 SAME_PLACE_M = 100  # one place listed twice by Overture's sources
-OSM_SAME_M = 150  # a place OpenStreetMap already has
-OSM_PART_M = 80  # ... under a longer or shorter name ("Shell" / "Shell Filling Station")
+OSM_SAME_M = 150  # a place OpenStreetMap already has, under the same name
+ONE_PLACE_M = 300  # ... or under its name and more ("Zoomlion Ghana Limited" / "... Headquarters": 171 m apart)
+CORE_MIN = 8  # letters a name needs before "contains it" means the same place ("Shell" isn't enough)
+OSM_PART_M = 80  # shorter names (5+ letters) only count this close
 TOWN_M = 2500  # the area named in search results: the nearest stop's town, if this close
+MAX_STREET = 40  # longer than this, Overture's address is a description, not a street
 
 OVERPASS = [
     "https://overpass-api.de/api/interpreter",
@@ -264,6 +269,34 @@ def clean_name(name: str) -> str:
     return tidy(name)
 
 
+GPS_CODE = re.compile(r"\b[A-Z]{2}\s*-?\s*\d{3,4}\s*-?\s*\d{3,4}\b")  # GhanaPostGPS: "GA-183-8164"
+PLUS_CODE = re.compile(r"\b[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b")  # "GPCQ+VH3"
+GPS_WORDS = re.compile(r"(digital address|ghana ?post( gps)?|gps)\s*:?", re.I)
+# An address worth showing names a road or a building, not just a company or a town.
+STREETISH = re.compile(
+    r"\b(road|rd|street|st|avenue|ave|lane|ln|close|crescent|cres|drive|dr|highway|hwy|high way|junction|"
+    r"link|way|loop|circle|roundabout|bypass|boulevard|blvd|motorway|square|sq|plaza|mall|market|building|"
+    r"house|tower|centre|center|estate|court|terrace|row)\b",
+    re.I,
+)
+
+
+def street_of(row: dict, name: str) -> str:
+    """The street from Overture's address ("University Farm Rd"), or "" when it has none worth
+    showing: codes, phone numbers and directions are dropped, a long one is cut at its first comma,
+    and one that names no road or building ("Damerko company limited") isn't shown."""
+    address = (row.get("addresses") or [{}])[0] or {}
+    s = (address.get("freeform") or "").replace("\\n", ", ").replace("\n", ", ")
+    s = PHONE.sub(" ", GPS_WORDS.sub(" ", PLUS_CODE.sub(" ", GPS_CODE.sub(" ", s))))
+    s = re.sub(r"(\s*,\s*)+", ", ", tidy(s)).strip(" ,.-#")
+    if len(s) > MAX_STREET:
+        s = s.split(", ")[0].strip(" ,.-#")
+    if not (3 <= len(s) <= MAX_STREET) or not STREETISH.search(s) or squash(s) == squash(name):
+        return ""
+    # "kokrobite road bortianor", "ACCRA - CAPE COAST RD": as a sign would write them.
+    return s.title() if s.islower() or s.isupper() else s
+
+
 def area(stations: list[dict]) -> tuple[float, float, float, float]:
     lats = [s["lat"] for s in stations]
     lons = [s["lon"] for s in stations]
@@ -387,7 +420,10 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
         lon, lat = at
         if not (w <= lon <= e and s <= lat <= n):
             continue
-        keep.append({"name": name, "lon": lon, "lat": lat, "conf": conf, "kind": kind_of(row), "key": squash(name)})
+        keep.append({
+            "name": name, "lon": lon, "lat": lat, "conf": conf, "kind": kind_of(row), "key": squash(name),
+            "street": street_of(row, name),
+        })
 
     # 2. One place listed twice: keep the surer.
     keep.sort(key=lambda p: -p["conf"])
@@ -398,19 +434,27 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
         grid.add(p["lon"], p["lat"], p)
         places.append(p)
 
-    # 3. Already on the map from OpenStreetMap?
+    # 3. The same place in OpenStreetMap? The map shows one of the two, the plainer name:
+    #    the same name -> OSM's (its tiles draw it); OSM's is shorter -> OSM's; Overture's is shorter
+    #    ("Zoomlion Ghana Limited" vs OSM's "... Headquarters") -> Overture's, and OSM's is hidden by
+    #    name, which only works for a name OSM uses once here (a filter hides every copy).
     osm_grid = Grid()
+    times = Counter(name for _, _, name in osm)
     for lon, lat, name in osm:
         k = squash(name)
         if k:
-            osm_grid.add(lon, lat, k)
-    for p in places:
+            osm_grid.add(lon, lat, (k, name))
+    longer_in_osm: dict[int, set[str]] = defaultdict(set)
+    for i, p in enumerate(places):
         p["osm"] = False
-        for d, k in osm_grid.near(p["lon"], p["lat"], OSM_SAME_M):
-            short, long_ = sorted((k, p["key"]), key=len)
-            if k == p["key"] or (d <= OSM_PART_M and len(short) >= 5 and short in long_):
+        for d, (k, name) in osm_grid.near(p["lon"], p["lat"], ONE_PLACE_M):
+            if k == p["key"]:
+                p["osm"] = p["osm"] or d <= OSM_SAME_M
+            elif k in p["key"] and (len(k) >= CORE_MIN or (d <= OSM_PART_M and len(k) >= 5)):
                 p["osm"] = True
-                break
+            elif p["key"] in k and len(p["key"]) >= CORE_MIN and times[name] == 1:
+                longer_in_osm[i].add(name)
+    hide_osm = sorted({n for i, names in longer_in_osm.items() if not places[i]["osm"] for n in names})
 
     # 4. The area to name in search: the nearest stop's town.
     stop_grid = Grid()
@@ -418,25 +462,31 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
         if st.get("town"):
             stop_grid.add(st["lon"], st["lat"], st["town"])
     towns: dict[str, int] = {}
+    streets: dict[str, int] = {}
     kinds: dict[tuple[str, str], int] = {}
     out = []
     for p in sorted(places, key=lambda p: (p["lat"], p["lon"])):
         town = min(stop_grid.near(p["lon"], p["lat"], TOWN_M), default=None, key=lambda t: t[0])
         t = towns.setdefault(town[1], len(towns)) if town else -1
+        st = streets.setdefault(p["street"], len(streets)) if p["street"] else -1
         k = kinds.setdefault(p["kind"], len(kinds))
         tier = tier_of(p["kind"][1], p["conf"])
         sure = round(p["conf"] * 100)
-        out.append([round(p["lon"], 5), round(p["lat"], 5), p["name"], k, tier, t, sure, int(p["osm"])])
+        out.append([round(p["lon"], 5), round(p["lat"], 5), p["name"], k, tier, t, sure, int(p["osm"]), st])
 
     log.info(
-        "%d Overture places: %d sure enough, %d after merging copies, %d also in OpenStreetMap",
-        len(rows), len(keep), len(places), sum(p["osm"] for p in places),
+        "%d Overture places: %d sure enough, %d after merging copies, %d also in OpenStreetMap, "
+        "%d OSM names hidden for a plainer Overture one, %d with a street",
+        len(rows), len(keep), len(places), sum(p["osm"] for p in places), len(hide_osm),
+        sum(1 for p in places if p["street"]),
     )
     return {
         "source": f"Overture Maps Foundation, release {release}, CDLA Permissive 2.0",
-        "fields": ["lon", "lat", "name", "kind", "tier", "town", "confidence", "on_osm_map"],
+        "fields": ["lon", "lat", "name", "kind", "tier", "town", "confidence", "on_osm_map", "street"],
         "kinds": [list(k) for k in kinds],
         "towns": list(towns),
+        "streets": list(streets),
+        "hide_osm": hide_osm,
         "places": out,
     }
 

@@ -4,8 +4,9 @@
  * found by search, offline too once it has loaded (the service worker keeps the file). OpenStreetMap
  * knows few of Accra's businesses; Overture's list comes from Meta, Microsoft and others.
  *
- * Places OpenStreetMap already shows on the map (`onOsmMap`) aren't drawn twice, but search still
- * finds them offline.
+ * One place in both lists shows once on the map, under the plainer name: OpenStreetMap's when the
+ * names are the same (`onOsmMap`: not drawn again, still searched offline), Overture's when OSM's
+ * is the same and more ("Zoomlion Ghana Limited" / "... Headquarters", `hideOsm`).
  */
 import type { Place } from "./places";
 import { fold, squash } from "./search";
@@ -22,6 +23,8 @@ export interface MorePlace {
   tier: number;
   /** The nearest trotro stop's town, within 2.5 km. */
   town: string | null;
+  /** From Overture's address, when it names a road or building: "University Farm Rd". */
+  street: string | null;
   /** Overture's confidence, 50–100. */
   sure: number;
   onOsmMap: boolean;
@@ -36,25 +39,30 @@ export interface MorePlaces {
   source: string;
   /** What the map draws (source `places`): the ones OpenStreetMap's tiles don't show already. */
   geojson: GeoJSON.FeatureCollection;
+  /** OpenStreetMap places the map leaves out, by name: Overture has them under a plainer one. */
+  hideOsm: string[];
 }
 
 interface Raw {
   source: string;
   kinds: [string, string][];
   towns: string[];
-  places: [number, number, string, number, number, number, number, number][];
+  streets?: string[];
+  hide_osm?: string[];
+  places: [number, number, string, number, number, number, number, number, number?][];
 }
 
 const WORD = /[^\p{L}\p{N}]+/u;
 
 export function parseMorePlaces(raw: Raw): MorePlaces {
-  const list: MorePlace[] = raw.places.map(([lon, lat, name, k, tier, t, sure, osm]) => ({
+  const list: MorePlace[] = raw.places.map(([lon, lat, name, k, tier, t, sure, osm, st = -1]) => ({
     name,
     at: [lon, lat],
     kind: raw.kinds[k]?.[0] ?? "Place",
     cls: raw.kinds[k]?.[1] ?? "place",
     tier,
     town: t >= 0 ? raw.towns[t] ?? null : null,
+    street: st >= 0 ? raw.streets?.[st] ?? null : null,
     sure,
     onOsmMap: osm === 1,
     words: fold(name).split(WORD).filter(Boolean),
@@ -70,7 +78,12 @@ export function parseMorePlaces(raw: Raw): MorePlaces {
       properties: { i, name: p.name, class: p.cls, tier: p.tier, rank: p.tier * 100 + (100 - p.sure) },
     });
   });
-  return { list, source: raw.source, geojson: { type: "FeatureCollection", features } };
+  return {
+    list,
+    source: raw.source,
+    geojson: { type: "FeatureCollection", features },
+    hideOsm: raw.hide_osm ?? [],
+  };
 }
 
 let loading: Promise<MorePlaces | null> | null = null;
@@ -88,8 +101,15 @@ export function loadMorePlaces(): Promise<MorePlaces | null> {
   return loading;
 }
 
-/** "Pharmacy · Osu". */
-export function detailOf(p: MorePlace): string {
+/** Where it is, the way map apps write it: "University Farm Rd, Nmai Dzorm", or what it is and
+ *  where when there's no street: "Pharmacy · Osu". `withKind` puts what it is first either way
+ *  (the place's card: "Utility · University Farm Rd, Nmai Dzorm"). */
+export function detailOf(p: MorePlace, withKind = false): string {
+  // The town after the street, unless the "street" is the town itself ("Kasoa", not "Kasoa, Kasoa").
+  const where = p.street
+    ? [p.street, p.town].filter((x, i, all) => x && all.findIndex((y) => fold(y ?? "") === fold(x)) === i).join(", ")
+    : null;
+  if (where) return withKind ? `${p.kind} · ${where}` : where;
   return [p.kind, p.town].filter(Boolean).join(" · ");
 }
 

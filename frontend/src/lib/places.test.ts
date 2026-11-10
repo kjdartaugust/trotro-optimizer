@@ -33,6 +33,31 @@ describe("place search, ranked like a map app", () => {
     const again: Place = { ...mall, at: [-0.17402, 5.62251] };
     expect(rankPlaces([mall, again], "Accra Mall", [-0.2, 5.6])).toHaveLength(1);
   });
+
+  // Overture's listing (the one Google shows) and OpenStreetMap's building, 171 m apart.
+  const listing: Place = { name: "Zoomlion Ghana Limited", detail: "University Farm Rd, Nmai Dzorm", at: [-0.11304, 5.67345] };
+
+  it("shows a place once when one name is the other's and more, as the name typed", () => {
+    // Searched from central Accra: the Headquarters is nearer, but it's the same place.
+    const got = rankPlaces([hq, listing], "Zoomlion Ghana Limited", [-0.205, 5.6]);
+    expect(got.map((p) => p.name)).toEqual(["Zoomlion Ghana Limited"]);
+  });
+
+  it("keeps the fuller name when that's what was typed", () => {
+    const got = rankPlaces([listing, hq], "Zoomlion headquarters", [-0.205, 5.6]);
+    expect(got.map((p) => p.name)).toEqual(["Zoomlion Ghana Limited Headquarters"]);
+  });
+
+  it("keeps the plainer name of the two otherwise, and other places nearby", () => {
+    const got = rankPlaces([hq, busStop, listing, teshie], "Zoomlion", [-0.1135, 5.674]);
+    expect(got.map((p) => p.name)).toEqual(["Zoomlion Bus Stop", "Zoomlion Ghana Limited", "Zoomlion"]);
+  });
+
+  it("doesn't merge short names that only look alike", () => {
+    const shell: Place = { name: "Shell", detail: "", at: [-0.2, 5.6] };
+    const shellStation: Place = { name: "Shell Filling Station", detail: "", at: [-0.2015, 5.6] };
+    expect(rankPlaces([shell, shellStation], "Shell", [-0.2, 5.6])).toHaveLength(2);
+  });
 });
 
 describe("matching what riders type", () => {

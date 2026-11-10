@@ -113,25 +113,37 @@ const named: FilterSpecification = ["all",
   ["!", ["match", ["get", "class"], LEFT_OUT, true, false]],
 ];
 
-function osm(id: string, minzoom: number, ranks: [number, number], dark: boolean): LayerSpecification {
+function osm(id: string, minzoom: number, dark: boolean, hidden: string[]): LayerSpecification {
   return {
     id,
     type: "symbol",
     source: "openmaptiles",
     "source-layer": "poi",
     minzoom,
-    filter: ["all", named, [">=", ["get", "rank"], ranks[0]], ["<", ["get", "rank"], ranks[1]]],
+    filter: osmFilter(id, hidden),
     ...look(dark),
   } as LayerSpecification;
 }
 
+const OSM_RANKS: Record<string, [number, number]> = {
+  "places-osm-1": [1, 7],
+  "places-osm-2": [7, 20],
+  "places-osm-3": [20, 1e9],
+};
+export const OSM_PLACE_LAYERS = Object.keys(OSM_RANKS);
+
+/** Which of OpenStreetMap's places a layer draws: its ranks, named, minus `hidden` (names Overture
+ *  has under a plainer name, lib/morePlaces.ts `hideOsm`). */
+export function osmFilter(id: string, hidden: string[] = []): FilterSpecification {
+  const [lo, hi] = OSM_RANKS[id];
+  const f: unknown[] = ["all", named, [">=", ["get", "rank"], lo], ["<", ["get", "rank"], hi]];
+  if (hidden.length) f.push(["!", ["in", ["get", "name"], ["literal", hidden]]]);
+  return f as FilterSpecification;
+}
+
 /** OpenStreetMap's places, busiest first (OpenMapTiles' rank), the rest as you zoom in. */
-export function osmPlaceLayers(dark: boolean): LayerSpecification[] {
-  return [
-    osm("places-osm-1", TIER_ZOOM[0], [1, 7], dark),
-    osm("places-osm-2", TIER_ZOOM[1], [7, 20], dark),
-    osm("places-osm-3", TIER_ZOOM[2], [20, 1e9], dark),
-  ];
+export function osmPlaceLayers(dark: boolean, hidden: string[] = []): LayerSpecification[] {
+  return OSM_PLACE_LAYERS.map((id, t) => osm(id, TIER_ZOOM[t], dark, hidden));
 }
 
 /** Overture's places (source `places`, lib/morePlaces.ts), by the tier the ETL gave each. */

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { morePlaceLayers, osmPlaceLayers, PLACE_LAYERS, placeName, placesBefore } from "./mapPlaces";
+import { morePlaceLayers, osmFilter, osmPlaceLayers, PLACE_LAYERS, placeName, placesBefore } from "./mapPlaces";
 import { detailOf, findMorePlaces, parseMorePlaces } from "./morePlaces";
 import { rankPlaces, type Place } from "./places";
 import type { LngLat } from "./shapes";
@@ -61,6 +61,23 @@ describe("Overture's places on this device", () => {
     const got = rankPlaces([...findMorePlaces(more, "Zoomlion", onUniversityFarmRoad), photon], "Zoomlion", onUniversityFarmRoad);
     expect(got.filter((p) => p.name === "Zoomlion Ghana Limited")).toHaveLength(1);
   });
+
+  it("says where a place is by its street when Overture has one, as map apps do", () => {
+    const withStreet = parseMorePlaces({
+      ...raw,
+      streets: ["University Farm Rd", "Osu"],
+      hide_osm: ["Zoomlion Ghana Limited Headquarters"],
+      places: [
+        [-0.11304, 5.67345, "Zoomlion Ghana Limited", 0, 2, 0, 91, 0, 0],
+        [-0.18251, 5.5571, "QP Pharmacy Osu", 1, 3, 1, 70, 1, 1],
+      ],
+    });
+    const [z, qp] = withStreet.list;
+    expect(detailOf(z)).toBe("University Farm Rd, Nmai Dzorm");
+    expect(detailOf(z, true)).toBe("Utility · University Farm Rd, Nmai Dzorm");
+    expect(detailOf(qp)).toBe("Osu"); // the "street" is the town: said once
+    expect(withStreet.hideOsm).toEqual(["Zoomlion Ghana Limited Headquarters"]);
+  });
 });
 
 describe("the shipped places file", () => {
@@ -73,11 +90,21 @@ describe("the shipped places file", () => {
     expect(more.source).toMatch(/^Overture Maps Foundation, release \d{4}-\d{2}-\d{2}/);
   });
 
-  it("has the Zoomlion head office Google shows on University Farm Road", () => {
+  it("has the Zoomlion head office Google shows on University Farm Road, once", () => {
     const [z] = findMorePlaces(more, "Zoomlion Ghana Limited", onUniversityFarmRoad);
-    expect(z.name).toBe("Zoomlion Ghana Limited");
+    expect(z).toMatchObject({ name: "Zoomlion Ghana Limited", detail: "University Farm Rd, Nmai Dzorm" });
     expect(Math.abs(z.at[0] - -0.113)).toBeLessThan(0.002);
     expect(Math.abs(z.at[1] - 5.673)).toBeLessThan(0.002);
+    // OpenStreetMap's "... Headquarters" building, 171 m away, is the same place: not drawn twice.
+    expect(more.hideOsm).toContain("Zoomlion Ghana Limited Headquarters");
+    // And search shows one of the two, the name that was typed (Photon's answer as it comes).
+    const photon: Place = {
+      name: "Zoomlion Ghana Limited Headquarters",
+      detail: "Adjetey Adjei Sueley Street, Nmai Dzorm",
+      at: [-0.11336, 5.67195],
+    };
+    const got = rankPlaces([z, photon], "Zoomlion Ghana Limited", [-0.205, 5.6]);
+    expect(got.map((p) => p.name)).toEqual(["Zoomlion Ghana Limited"]);
   });
 
   it("gives every place a kind, a tier the map knows, and a point near Accra", () => {
@@ -110,6 +137,13 @@ describe("places on the map", () => {
     const ids = [...osmPlaceLayers(false), ...morePlaceLayers(true)].map((l) => l.id);
     expect(ids).toEqual(PLACE_LAYERS);
     expect(osmPlaceLayers(false).map((l) => l.minzoom)).toEqual([14.5, 15.5, 16.5]);
+  });
+
+  it("leaves out OpenStreetMap's copy of a place Overture names more plainly", () => {
+    expect(JSON.stringify(osmFilter("places-osm-2"))).not.toContain("literal");
+    const f = JSON.stringify(osmFilter("places-osm-2", ["Zoomlion Ghana Limited Headquarters"]));
+    expect(f).toContain('["!",["in",["get","name"],["literal",["Zoomlion Ghana Limited Headquarters"]]]]');
+    expect(f).toContain('[">=",["get","rank"],7]');
   });
 
   it("reads a place's name from either source", () => {
