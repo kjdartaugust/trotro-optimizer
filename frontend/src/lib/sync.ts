@@ -16,6 +16,7 @@ import {
   getVersion,
   hasDataset,
   outbox,
+  putPlaceFixes,
   setGeneration,
   setVersion,
   upsertRoutes,
@@ -42,6 +43,7 @@ async function fetchSnapshot(): Promise<DatasetSnapshot> {
 async function store(snap: DatasetSnapshot): Promise<void> {
   if (snap.stations.length) await upsertStations(snap.stations);
   if (snap.routes.length) await upsertRoutes(snap.routes);
+  await putPlaceFixes(snap.place_fixes ?? []);
   await setVersion(snap.version);
   await setGeneration(NETWORK_GENERATION);
 }
@@ -55,31 +57,34 @@ export async function ensureNetwork(): Promise<{ version: number; downloaded: bo
   return { version: snap.version, downloaded: true };
 }
 
-/** Returns whether anything changed. */
-export async function pull(): Promise<{ version: number; changed: boolean }> {
-  if (!isOnline()) return { version: await getVersion(), changed: false };
+/** Returns whether the network changed, and whether riders moved any place's pin. */
+export async function pull(): Promise<{ version: number; changed: boolean; fixed: boolean }> {
+  if (!isOnline()) return { version: await getVersion(), changed: false, fixed: false };
   const { downloaded } = await ensureNetwork();
   const since = await getVersion();
   const changes = await fetchChanges(since);
   const gone = [...(changes.deleted_route_ids ?? []), ...(changes.deleted_station_ids ?? [])];
   const changed = changes.stations.length + changes.routes.length + gone.length > 0;
-  if (changed) {
+  const fixed = (changes.place_fixes ?? []).length > 0;
+  if (changed || fixed) {
     await deleteRows("routes", changes.deleted_route_ids ?? []);
     await deleteRows("stations", changes.deleted_station_ids ?? []);
     await store(changes);
   } else if (changes.version !== since) {
     await setVersion(changes.version);
   }
-  return { version: changes.version, changed: changed || downloaded };
+  return { version: changes.version, changed: changed || downloaded, fixed };
 }
 
-export async function flush(): Promise<{ pushed: number }> {
-  if (!isOnline()) return { pushed: 0 };
+/** `refused`: items the server wouldn't take (a newer server's rules, or too many pin moves from
+ *  here this hour). They're dropped with the rest: kept, they'd never go through. */
+export async function flush(): Promise<{ pushed: number; refused: number }> {
+  if (!isOnline()) return { pushed: 0, refused: 0 };
   const items = await outbox();
-  if (!items.length) return { pushed: 0 };
+  if (!items.length) return { pushed: 0, refused: 0 };
   const res = await pushOutbox(items);
   await clearOutbox(items.map((i) => i.client_key));
-  return { pushed: res.accepted + res.duplicates };
+  return { pushed: res.accepted + res.duplicates, refused: res.refused ?? 0 };
 }
 
 /** Convenience: pull dataset then flush the outbox. */

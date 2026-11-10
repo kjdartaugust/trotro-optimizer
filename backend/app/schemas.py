@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from .config import settings
+from .routing.geo import haversine_m
 
 
 # ---------- Stations ----------
@@ -105,10 +108,27 @@ class PlanResponse(BaseModel):
 
 
 # ---------- Contributions ----------
+# The map's bounds (frontend TripMap maxBounds): a pin can't be put anywhere the app can't show.
+AREA = (-1.4, 4.9, 1.0, 6.4)  # west, south, east, north
+
+
+def _spot(v: Any) -> tuple[float, float] | None:
+    """``[lon, lat]`` inside the app's area, else None."""
+    if not isinstance(v, list | tuple) or len(v) != 2:
+        return None
+    if any(isinstance(x, bool) or not isinstance(x, int | float) for x in v):
+        return None
+    lon, lat = float(v[0]), float(v[1])
+    w, s, e, n = AREA
+    return (lon, lat) if w <= lon <= e and s <= lat <= n else None
+
+
 class ContributionCreate(BaseModel):
     # fareboard: a station's fare board, payload {"station_id", "rows": [{"to", "fare",
     # "to_station_id"}], "effective", "read": "photo"|"typed"} (see app/fares.py).
-    kind: Literal["station", "route", "fare", "fareboard"]
+    # place: a place's pin moved to where it really is, payload {"key", "name", "from": [lon, lat],
+    # "to": [lon, lat]}; `from` is the places file's spot, `key` the place (see app/apply.py).
+    kind: Literal["station", "route", "fare", "fareboard", "place"]
     target_id: str | None = None
     payload: dict[str, Any]
     note: str | None = None
@@ -135,6 +155,26 @@ class ContributionCreate(BaseModel):
                 raise ValueError("to_station_id is a station id")
         return self
 
+    @model_validator(mode="after")
+    def _place_shape(self):
+        if self.kind != "place":
+            return self
+        p = self.payload
+        key, name = p.get("key"), p.get("name")
+        if not isinstance(key, str) or not 1 <= len(key) <= 200:
+            raise ValueError("a pin move needs the place's key")
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 160:
+            raise ValueError("a pin move needs the place's name")
+        was, now = _spot(p.get("from")), _spot(p.get("to"))
+        if was is None or now is None:
+            raise ValueError("a pin move needs where the pin was and where it goes, both on the app's map")
+        moved = haversine_m(was[1], was[0], now[1], now[0])
+        if moved < 3:
+            raise ValueError("the pin hasn't moved")
+        if moved > settings.place_fix_max_m:
+            raise ValueError(f"a pin moves at most {settings.place_fix_max_m / 1000:g} km from the places file's spot")
+        return self
+
 
 class ContributionOut(BaseModel):
     id: str
@@ -146,6 +186,22 @@ class ContributionOut(BaseModel):
     confidence: float
     reporter_id: str | None
     created_at: datetime
+    version: int
+
+    class Config:
+        from_attributes = True
+
+
+class PlaceFixOut(BaseModel):
+    """Where riders say a place is: the place with this name nearest (from_lon, from_lat) in the
+    app's places file is drawn at (lon, lat) instead."""
+
+    key: str
+    name: str
+    from_lat: float
+    from_lon: float
+    lat: float
+    lon: float
     version: int
 
     class Config:
@@ -167,6 +223,7 @@ class DatasetSnapshot(BaseModel):
     generated_at: datetime
     stations: list[StationOut]
     routes: list[RouteOut]
+    place_fixes: list[PlaceFixOut] = []
 
 
 class ChangeSet(BaseModel):
@@ -174,6 +231,7 @@ class ChangeSet(BaseModel):
     version: int
     stations: list[StationOut]
     routes: list[RouteOut]
+    place_fixes: list[PlaceFixOut] = []
     # Taken out of the network since `since`: drop them.
     deleted_station_ids: list[str] = []
     deleted_route_ids: list[str] = []
@@ -184,10 +242,16 @@ class PushItem(ContributionCreate):
 
 
 class PushRequest(BaseModel):
-    items: list[PushItem]
+    # An item this server won't take (bad, or from an app older or newer than its rules) stays a
+    # plain dict and is skipped as `refused`: failing the whole push would leave a phone's outbox
+    # stuck behind it for good.
+    items: list[Annotated[PushItem | dict[str, Any], Field(union_mode="left_to_right")]]
 
 
 class PushResult(BaseModel):
     accepted: int
     duplicates: int
     ids: list[str]
+    # Items not taken: ones this server won't accept, and pin moves over this address's hourly
+    # cap (settings.place_fixes_per_hour).
+    refused: int = 0

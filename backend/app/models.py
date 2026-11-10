@@ -142,3 +142,19 @@ class RetiredRow(Base):
     kind: Mapped[str] = mapped_column(String(20), nullable=False)  # station|route
     version: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     retired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlaceFix(Base, TimestampMixin):
+    """Where riders say a place really is: its pin moved from the places file's spot (``from_*``,
+    frontend/public/network/places.json) to ``lat``/``lon``. Keyed by the place (its squashed name
+    at that spot), so a later move of the same place replaces this one; every move stays in
+    ``contributions``. Devices get these through /sync and draw the place where riders put it."""
+
+    __tablename__ = "place_fixes"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    from_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    from_lon: Mapped[float] = mapped_column(Float, nullable=False)
+    lat: Mapped[float] = mapped_column(Float, nullable=False)
+    lon: Mapped[float] = mapped_column(Float, nullable=False)

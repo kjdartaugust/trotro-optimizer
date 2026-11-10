@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { morePlaceLayers, osmFilter, osmPlaceLayers, PLACE_LAYERS, placeName, placesBefore } from "./mapPlaces";
-import { detailOf, findMorePlaces, parseMorePlaces } from "./morePlaces";
+import { detailOf, findMorePlaces, LOCAL_FIX, moveProblem, parseMorePlaces, placeKey, withFixes } from "./morePlaces";
 import { rankPlaces, type Place } from "./places";
 import type { LngLat } from "./shapes";
+import type { ApiPlaceFix } from "./types";
 
 // The shape app/etl/overture_places.py writes: [lon, lat, name, kind, tier, town, confidence, on OSM's map].
 const raw = {
@@ -77,6 +78,68 @@ describe("Overture's places on this device", () => {
     expect(detailOf(z, true)).toBe("Utility · University Farm Rd, Nmai Dzorm");
     expect(detailOf(qp)).toBe("Osu"); // the "street" is the town: said once
     expect(withStreet.hideOsm).toEqual(["Zoomlion Ghana Limited Headquarters"]);
+  });
+});
+
+describe("riders moving a place's pin", () => {
+  const more = parseMorePlaces(raw);
+  const zoomlion = more.list[0]; // on University Farm Rd, where Overture's listing sat
+  const building: LngLat = [-0.11337, 5.67193];
+  const fix = (over: Partial<ApiPlaceFix> = {}): ApiPlaceFix => ({
+    key: placeKey(zoomlion),
+    name: "Zoomlion Ghana Limited",
+    from_lon: -0.11304,
+    from_lat: 5.67345,
+    lon: building[0],
+    lat: building[1],
+    version: 7,
+    ...over,
+  });
+
+  it("names the place for the server by its name and the places file's spot", () => {
+    expect(placeKey(zoomlion)).toBe("zomlionghanalimited@-0.11304,5.67345");
+  });
+
+  it("puts a moved place where riders put it, on the map and in search", () => {
+    const fixed = withFixes(more, [fix()]);
+    expect(fixed.list[0]).toMatchObject({ at: building, origin: [-0.11304, 5.67345], fixed: true });
+    const drawn = fixed.geojson.features.find((f) => f.properties?.name === "Zoomlion Ghana Limited");
+    expect(drawn?.geometry).toEqual({ type: "Point", coordinates: building });
+    expect(drawn?.properties?.i).toBe(0);
+    expect(findMorePlaces(fixed, "Zoomlion Ghana", onUniversityFarmRoad)[0].at).toEqual(building);
+    // The rest stay put, in the same order: the map's features point into the list.
+    expect(fixed.list.slice(1)).toEqual(more.list.slice(1));
+  });
+
+  it("finds the place when a newer places file shifted it a little, never another place", () => {
+    expect(withFixes(more, [fix({ from_lon: -0.1132, from_lat: 5.6736 })]).list[0].at).toEqual(building); // 24 m
+    expect(withFixes(more, [fix({ from_lon: -0.12, from_lat: 5.68 })]).list[0].fixed).toBe(false); // 1 km
+    const other = withFixes(more, [fix({ name: "Zoomlion Logistics" })]);
+    expect(other.list.some((p) => p.fixed)).toBe(false);
+  });
+
+  it("shows the newest move of a place, this phone's own until the server sends it back", () => {
+    const older = fix({ lon: -0.1135, lat: 5.6721, version: 3 });
+    expect(withFixes(more, [fix(), older]).list[0].at).toEqual(building);
+    const mine = fix({ lon: -0.1136, lat: 5.6722, version: LOCAL_FIX });
+    expect(withFixes(more, [fix(), mine]).list[0].at).toEqual([-0.1136, 5.6722]);
+  });
+
+  it("applies the moves from the file's spots: again changes nothing, none puts it back", () => {
+    const once = withFixes(more, [fix()]);
+    expect(withFixes(once, [fix()])).toEqual(once);
+    expect(withFixes(once, []).list[0]).toEqual(more.list[0]);
+    expect(withFixes(more, [])).toBe(more); // nothing to do: no new list, no redraw
+  });
+
+  it("moves a pin only on the map and within its neighbourhood, as the server allows", () => {
+    expect(moveProblem(zoomlion, building)).toBeNull();
+    expect(moveProblem(zoomlion, [-0.11304, 5.67346])).toMatch(/Drag the pin/); // 1 m: not moved
+    expect(moveProblem(zoomlion, [-0.11304, 5.71])).toMatch(/over 3 km/);
+    expect(moveProblem(zoomlion, [2.35, 48.85])).toMatch(/off the map/);
+    // Measured from the file's spot, not from an earlier move: the server's rule too.
+    const moved = withFixes(more, [fix({ lon: -0.11304, lat: 5.69845 })]).list[0]; // 2.8 km north
+    expect(moveProblem(moved, [-0.11304, 5.70345])).toMatch(/over 3 km/); // 0.6 km on, 3.3 km in all
   });
 });
 

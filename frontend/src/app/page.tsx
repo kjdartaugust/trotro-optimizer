@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LineCard, LinesHere, PinCard, StopCard } from "@/components/Cards";
+import { LineCard, LinesHere, MoveCard, PinCard, StopCard } from "@/components/Cards";
 import { HistoryIcon, LocateIcon, MapTapIcon, SearchIcon, ShareIcon } from "@/components/icons";
 import Options from "@/components/Options";
 import SearchPanel from "@/components/SearchPanel";
@@ -13,7 +13,8 @@ import type { Drawn, TappedPlace } from "@/components/TripMap";
 import TripFields from "@/components/TripFields";
 import { DEFAULT_OPTS } from "@/engine/engine";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
-import { allRoutes, allStations, hasDataset, outbox } from "@/lib/db";
+import { submitContribution } from "@/lib/contribute";
+import { allPlaceFixes, allRoutes, allStations, hasDataset, outbox, putPlaceFixes } from "@/lib/db";
 import { cedis, metres, minutes, routeColor } from "@/lib/format";
 import {
   buildNetwork,
@@ -24,7 +25,15 @@ import {
   stopsOf,
   type Network,
 } from "@/lib/network";
-import { detailOf, loadMorePlaces, type MorePlaces } from "@/lib/morePlaces";
+import {
+  detailOf,
+  loadMorePlaces,
+  LOCAL_FIX,
+  moveProblem,
+  placeKey,
+  withFixes,
+  type MorePlaces,
+} from "@/lib/morePlaces";
 import { nameOf } from "@/lib/places";
 import { planTrip, warmPlanner } from "@/lib/plan";
 import { loadShapes, metres as distance, type LngLat } from "@/lib/shapes";
@@ -41,6 +50,7 @@ import {
   type Recent,
   type TripOption,
 } from "@/lib/trip";
+import type { ApiPlaceFix } from "@/lib/types";
 
 // MapLibre touches window: client only.
 const TripMap = dynamic(() => import("@/components/TripMap"), {
@@ -55,8 +65,10 @@ type Panel =
   | { kind: "line"; id: string }
   | { kind: "lines"; ids: string[] }
   | { kind: "stop"; id: string }
-  // `place`: a named place tapped on the map, not just a spot.
-  | { kind: "pin"; at: LngLat; name: string | null; detail?: string; place?: boolean };
+  // `place`: a named place tapped on the map, not just a spot; `i`: one of Overture's (lib/morePlaces).
+  | { kind: "pin"; at: LngLat; name: string | null; detail?: string; place?: boolean; i?: number }
+  // Moving Overture's place `i` to where it really is; `to`: where the pin is now, once moved.
+  | { kind: "move"; i: number; to: LngLat | null };
 
 type Result =
   | { state: "planning" }
@@ -87,6 +99,7 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [recent, setRecent] = useState<Recent[]>([]);
   const [more, setMore] = useState<MorePlaces | null>(null);
+  const [saving, setSaving] = useState(false);
   const ends = useRef({ from, to });
   ends.current = { from, to };
   const ticket = useRef(0);
@@ -112,12 +125,19 @@ export default function Home() {
       setLoad("error");
       return;
     }
-    // The shops, offices and the rest for the map and search: after the trotros, never before.
-    void loadMorePlaces().then((m) => m && setMore(m));
+    // The shops, offices and the rest for the map and search: after the trotros, never before,
+    // where riders have put them.
+    void loadMorePlaces().then(async (m) => {
+      if (m) setMore(withFixes(m, await allPlaceFixes().catch(() => [])));
+    });
     // Then catch up with the API, which can take a minute to wake: nothing waits on it.
     try {
-      const { changed } = await pull();
+      const { changed, fixed } = await pull();
       if (changed) await refresh();
+      if (fixed) {
+        const fixes = await allPlaceFixes();
+        setMore((m) => m && withFixes(m, fixes));
+      }
       if ((await outbox()).length) {
         if (!loadToken()) await devLogin().catch(() => null);
         await flush();
@@ -281,7 +301,7 @@ export default function Home() {
     }
     setSnap("peek");
     if (place) {
-      setPanel({ kind: "pin", at, name: place.name, detail, place: true });
+      setPanel({ kind: "pin", at, name: place.name, detail, place: true, i: place.i });
       return;
     }
     setPanel({ kind: "pin", at, name: null });
@@ -310,6 +330,62 @@ export default function Home() {
   function closeCard() {
     setPanel({ kind: "home" });
     setSnap(from && to ? "half" : "peek");
+  }
+
+  // ── Moving a place on the wrong spot ─────────────────────────────────────────────────────────
+
+  function placeCard(i: number, at?: LngLat) {
+    const p = more?.list[i];
+    if (p) setPanel({ kind: "pin", at: at ?? p.at, name: p.name, detail: detailOf(p, true), place: true, i });
+  }
+
+  function startMove(i: number) {
+    const p = more?.list[i];
+    if (!p) return;
+    setPanel({ kind: "move", i, to: null });
+    setSnap("peek");
+    // Close enough to see the buildings.
+    setFocus((f) => ({ at: p.at, zoom: 17.5, seq: (f?.seq ?? 0) + 1 }));
+  }
+
+  async function saveMove(i: number, dropped: LngLat) {
+    const p = more?.list[i];
+    // To the 10 cm: more is noise from the finger.
+    const to: LngLat = [Math.round(dropped[0] * 1e6) / 1e6, Math.round(dropped[1] * 1e6) / 1e6];
+    if (!p || moveProblem(p, to) || saving) return;
+    setSaving(true);
+    try {
+      // On this phone at once, offline too; for everyone once the server has it.
+      const fix: ApiPlaceFix = {
+        key: placeKey(p),
+        name: p.name,
+        from_lon: p.origin[0],
+        from_lat: p.origin[1],
+        lon: to[0],
+        lat: to[1],
+        version: LOCAL_FIX,
+      };
+      await putPlaceFixes([fix]);
+      const fixes = await allPlaceFixes();
+      setMore((m) => m && withFixes(m, fixes));
+      // A trip to or from it goes to the new spot too.
+      const follow = (e: End | null) => (e && e.name === p.name && distance(e.at, p.at) < 5 ? { ...e, at: to } : e);
+      setFrom(follow);
+      setTo(follow);
+      const res = await submitContribution("place", null, { key: fix.key, name: p.name, from: p.origin, to });
+      setToast(
+        res.refused
+          ? "Lots of pins moved from here this hour: others will see this one later. Try again in a while."
+          : res.pushed
+            ? `Moved. Everyone now sees ${p.name} here.`
+            : "Saved on this phone. Everyone sees it once you're online."
+      );
+      placeCard(i, to);
+    } catch {
+      setToast("Couldn't save that spot. Try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   // ── Planning ─────────────────────────────────────────────────────────────────────────────────
@@ -479,14 +555,21 @@ export default function Home() {
         focus={focus}
         padding={padding}
         picking={panel.kind === "pick"}
+        moving={panel.kind === "move" ? (panel.to ?? more?.list[panel.i]?.at ?? null) : null}
         onTap={tapped}
         onStop={tappedStop}
         onLines={tappedLines}
         onMoved={(c) => (view.current = c)}
+        onMovePin={(at) => setPanel((p) => (p.kind === "move" ? { ...p, to: at } : p))}
       />
       {panel.kind === "pick" && (
         <div className="map-hint" role="status">
           <MapTapIcon /> Tap where you want to {panel.field === "from" ? "start" : "go"}
+        </div>
+      )}
+      {panel.kind === "move" && (
+        <div className="map-hint" role="status">
+          <MapTapIcon /> Drag the pin, or tap where it really is
         </div>
       )}
       {toast && (
@@ -539,6 +622,14 @@ export default function Home() {
             onGo={(e) => choose("to", e)}
             onClose={closeCard}
           />
+        ) : panel.kind === "move" && more?.list[panel.i] ? (
+          <MoveCard
+            place={more.list[panel.i]}
+            to={panel.to}
+            saving={saving}
+            onSave={() => panel.to && void saveMove(panel.i, panel.to)}
+            onCancel={() => placeCard(panel.i)}
+          />
         ) : panel.kind === "pin" && net ? (
           <PinCard
             net={net}
@@ -546,6 +637,8 @@ export default function Home() {
             name={panel.name}
             detail={panel.detail}
             place={panel.place}
+            fixed={panel.i !== undefined && !!more?.list[panel.i]?.fixed}
+            onMove={panel.i !== undefined && more?.list[panel.i] ? () => startMove(panel.i!) : undefined}
             onStart={(e) => choose("from", e)}
             onGo={(e) => choose("to", e)}
             onClose={closeCard}

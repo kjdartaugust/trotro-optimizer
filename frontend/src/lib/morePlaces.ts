@@ -7,10 +7,14 @@
  * One place in both lists shows once on the map, under the plainer name: OpenStreetMap's when the
  * names are the same (`onOsmMap`: not drawn again, still searched offline), Overture's when OSM's
  * is the same and more ("Zoomlion Ghana Limited" / "... Headquarters", `hideOsm`).
+ *
+ * A place riders have moved (a pin on the wrong spot, dragged onto its building) shows where they
+ * put it, on the map and in search: `withFixes`, with the moves from /sync (lib/db placeFixes).
  */
 import type { Place } from "./places";
 import { fold, squash } from "./search";
 import { metres as distance, type LngLat } from "./shapes";
+import type { ApiPlaceFix } from "./types";
 
 export interface MorePlace {
   name: string;
@@ -28,6 +32,9 @@ export interface MorePlace {
   /** Overture's confidence, 50–100. */
   sure: number;
   onOsmMap: boolean;
+  /** Where the places file has it. `at` is where riders moved it, if they have (`fixed`). */
+  origin: LngLat;
+  fixed: boolean;
   /** For matching what's typed: the name's words, folded, and squashed. */
   words: string[];
   sq: string;
@@ -65,9 +72,16 @@ export function parseMorePlaces(raw: Raw): MorePlaces {
     street: st >= 0 ? raw.streets?.[st] ?? null : null,
     sure,
     onOsmMap: osm === 1,
+    origin: [lon, lat],
+    fixed: false,
     words: fold(name).split(WORD).filter(Boolean),
     sq: squash(name),
   }));
+  return { list, source: raw.source, geojson: drawable(list), hideOsm: raw.hide_osm ?? [] };
+}
+
+/** What the map draws: the places OpenStreetMap's tiles don't show already, where they are. */
+function drawable(list: MorePlace[]): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   list.forEach((p, i) => {
     if (p.onOsmMap) return;
@@ -78,12 +92,61 @@ export function parseMorePlaces(raw: Raw): MorePlaces {
       properties: { i, name: p.name, class: p.cls, tier: p.tier, rank: p.tier * 100 + (100 - p.sure) },
     });
   });
-  return {
-    list,
-    source: raw.source,
-    geojson: { type: "FeatureCollection", features },
-    hideOsm: raw.hide_osm ?? [],
-  };
+  return { type: "FeatureCollection", features };
+}
+
+/** A move made on this phone, not yet back from the server: newer than any the server has sent. */
+export const LOCAL_FIX = Number.MAX_SAFE_INTEGER;
+/** How far a rebuilt places file may shift a place before a rider's move no longer finds it. */
+const FIX_REACH_M = 500;
+/** A pin moves at least this far, at most this far from the places file's spot, and stays on the
+ *  map (the same rules as the API's: backend/app/schemas.py, settings.place_fix_max_m). */
+export const MIN_MOVE_M = 3;
+export const MAX_MOVE_M = 3000;
+const AREA = { w: -1.4, s: 4.9, e: 1.0, n: 6.4 };
+
+/** The place a move is about, for the server: its squashed name at the places file's spot. */
+export function placeKey(p: MorePlace): string {
+  return `${p.sq}@${p.origin[0].toFixed(5)},${p.origin[1].toFixed(5)}`;
+}
+
+/** Why a pin can't go `to` (null: it can), from where the places file has the place. */
+export function moveProblem(p: MorePlace, to: LngLat): string | null {
+  const [lon, lat] = to;
+  if (!(lon >= AREA.w && lon <= AREA.e && lat >= AREA.s && lat <= AREA.n)) return "That's off the map.";
+  if (distance(p.at, to) < MIN_MOVE_M) return "Drag the pin, or tap where it really is.";
+  if (distance(p.origin, to) > MAX_MOVE_M) return "That's over 3 km from where we had it: is it the same place?";
+  return null;
+}
+
+/** The places as riders have fixed them: each move puts the place of its name nearest where the
+ *  places file had it (within 500 m) at the move's spot; the newest move of a place wins. Works
+ *  from the file's spots, so applying the moves again changes nothing. */
+export function withFixes(more: MorePlaces, fixes: ApiPlaceFix[]): MorePlaces {
+  const byName = new Map<string, number[]>();
+  more.list.forEach((p, i) => {
+    const same = byName.get(p.sq);
+    if (same) same.push(i);
+    else byName.set(p.sq, [i]);
+  });
+  const moved = new Map<number, ApiPlaceFix>();
+  for (const f of fixes) {
+    const from: LngLat = [f.from_lon, f.from_lat];
+    let best = -1;
+    let bestM = FIX_REACH_M;
+    for (const i of byName.get(squash(f.name)) ?? []) {
+      const m = distance(from, more.list[i].origin);
+      if (m <= bestM) [best, bestM] = [i, m];
+    }
+    if (best >= 0 && (moved.get(best)?.version ?? -1) < f.version) moved.set(best, f);
+  }
+  if (!moved.size && !more.list.some((p) => p.fixed)) return more;
+  const list = more.list.map((p, i): MorePlace => {
+    const f = moved.get(i);
+    if (f) return { ...p, at: [f.lon, f.lat], fixed: true };
+    return p.fixed ? { ...p, at: p.origin, fixed: false } : p;
+  });
+  return { ...more, list, geojson: drawable(list) };
 }
 
 let loading: Promise<MorePlaces | null> | null = null;

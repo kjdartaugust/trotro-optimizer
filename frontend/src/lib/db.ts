@@ -1,13 +1,14 @@
 /**
  * IndexedDB persistence for offline-first operation.
  *
- *  - `meta`         : dataset version cursor + last-sync timestamp
+ *  - `meta`         : dataset version cursor + last-sync timestamp, and riders' pin moves
+ *                     (`placeFixes`: few, so one entry, and no new store to upgrade into)
  *  - `stations`     : the offline station table (keyed by id)
  *  - `routes`       : the offline route table (keyed by id, stops embedded)
  *  - `outbox`       : contributions created offline, awaiting push (keyed by client_key)
  */
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { ApiRoute, ApiStation, QueuedContribution } from "./types";
+import type { ApiPlaceFix, ApiRoute, ApiStation, QueuedContribution } from "./types";
 
 interface TrotroDB extends DBSchema {
   meta: { key: string; value: unknown };
@@ -99,6 +100,24 @@ export async function allRoutes(): Promise<ApiRoute[]> {
 
 export async function hasDataset(): Promise<boolean> {
   return (await (await db()).count("stations")) > 0;
+}
+
+type Fixes = Record<string, ApiPlaceFix>;
+
+/** Riders' pin moves this phone knows (lib/morePlaces `withFixes` draws them). */
+export async function allPlaceFixes(): Promise<ApiPlaceFix[]> {
+  return Object.values(((await (await db()).get("meta", "placeFixes")) as Fixes | undefined) ?? {});
+}
+
+/** Keep these pin moves: one per place (its key), the latest given. */
+export async function putPlaceFixes(fixes: ApiPlaceFix[]): Promise<void> {
+  if (!fixes.length) return;
+  const d = await db();
+  const tx = d.transaction("meta", "readwrite");
+  const all = ((await tx.store.get("placeFixes")) as Fixes | undefined) ?? {};
+  for (const f of fixes) all[f.key] = f;
+  await tx.store.put(all, "placeFixes");
+  await tx.done;
 }
 
 export async function enqueue(c: QueuedContribution): Promise<void> {

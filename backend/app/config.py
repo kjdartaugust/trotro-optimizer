@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     fareboard_reads_per_hour: int = 20   # per address
     fareboard_reads_per_day: int = 300   # in all, to stay inside free tiers
 
+    # A rider moving a place's pin to where it really is (a "place" contribution). It applies at
+    # once, for everyone, like an OpenStreetMap edit: anyone can move it again, and every move is
+    # kept in contributions. False: pin moves wait for trust or a moderator like other reports.
+    place_fixes_auto_apply: bool = True
+    place_fixes_per_hour: int = 30       # per address
+    place_fix_max_m: float = 3000.0      # a pin moves within its neighbourhood, not across town
+
     cors_origins: str = "http://localhost:3000"
     # Optional regex alternative/supplement to the allowlist — handy for Vercel, whose per-deploy
     # preview URLs change (e.g. r"https://.*\.vercel\.app"). Empty disables it.

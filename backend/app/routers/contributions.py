@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import get_current_user
 from ..database import get_db
+from ..limits import address, place_fix_allowed
 from ..models import Contribution, User
 from ..schemas import ContributionCreate, ContributionOut, VoteIn
 from ..services import cast_vote, ingest_contribution
@@ -26,9 +27,12 @@ async def list_contributions(
 @router.post("", response_model=ContributionOut, status_code=201)
 async def submit_contribution(
     body: ContributionCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if body.kind == "place" and not place_fix_allowed(address(request)):
+        raise HTTPException(429, "Lots of pins moved from here this hour. Try again later.")
     return await ingest_contribution(
         db, user, body.kind, body.target_id, body.payload, body.note, body.client_key
     )

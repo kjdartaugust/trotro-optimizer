@@ -4,21 +4,25 @@
   * ``GET /sync/changes?since`` — deltas (rows whose ``version`` > cursor), and the ids of
                                   stations/routes retired since then, for the device to drop.
   * ``POST /sync/push``         — push queued offline contributions (idempotent by client_key).
+
+Riders' pin moves (``place_fixes``) travel with the network on the same version cursor.
 """
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..auth import get_optional_user
 from ..database import get_db
+from ..limits import address, place_fix_allowed
 from ..loader import dataset_version
-from ..models import Contribution, RetiredRow, Route, Station, User
+from ..models import Contribution, PlaceFix, RetiredRow, Route, Station, User
 from ..schemas import (
     ChangeSet,
     DatasetSnapshot,
+    PushItem,
     PushRequest,
     PushResult,
 )
@@ -34,11 +38,13 @@ async def dataset(db: AsyncSession = Depends(get_db)):
     routes = (
         await db.execute(select(Route).options(selectinload(Route.stops)))
     ).scalars().all()
+    fixes = (await db.execute(select(PlaceFix))).scalars().all()
     return DatasetSnapshot(
         version=version,
         generated_at=datetime.now(UTC),
         stations=stations,
         routes=routes,
+        place_fixes=fixes,
     )
 
 
@@ -56,11 +62,13 @@ async def changes(since: int = 0, db: AsyncSession = Depends(get_db)):
     retired = (
         await db.execute(select(RetiredRow).where(RetiredRow.version > since))
     ).scalars().all()
+    fixes = (await db.execute(select(PlaceFix).where(PlaceFix.version > since))).scalars().all()
     return ChangeSet(
         since=since,
         version=version,
         stations=stations,
         routes=routes,
+        place_fixes=fixes,
         deleted_station_ids=[r.id for r in retired if r.kind == "station"],
         deleted_route_ids=[r.id for r in retired if r.kind == "route"],
     )
@@ -69,11 +77,15 @@ async def changes(since: int = 0, db: AsyncSession = Depends(get_db)):
 @router.post("/push", response_model=PushResult)
 async def push(
     body: PushRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_optional_user),
 ):
-    accepted, duplicates, ids = 0, 0, []
+    accepted, duplicates, refused, ids = 0, 0, 0, []
     for item in body.items:
+        if not isinstance(item, PushItem):
+            refused += 1
+            continue
         seen = False
         if item.client_key:
             seen = (
@@ -83,6 +95,9 @@ async def push(
                     .where(Contribution.client_key == item.client_key)
                 )
             ).scalar() > 0
+        if item.kind == "place" and not seen and not place_fix_allowed(address(request)):
+            refused += 1
+            continue
         contrib = await ingest_contribution(
             db, user, item.kind, item.target_id, item.payload, item.note, item.client_key
         )
@@ -91,4 +106,4 @@ async def push(
         else:
             accepted += 1
         ids.append(contrib.id)
-    return PushResult(accepted=accepted, duplicates=duplicates, ids=ids)
+    return PushResult(accepted=accepted, duplicates=duplicates, refused=refused, ids=ids)
