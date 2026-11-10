@@ -1,4 +1,13 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import withPWAInit from "@ducanh2912/next-pwa";
+
+// The places file's version, in the address the app fetches: a new file arrives with the app that
+// reads it, instead of a phone's cached copy for one more visit (json is StaleWhileRevalidate).
+const placesVersion = createHash("sha256")
+  .update(readFileSync(new URL("./public/network/places.json", import.meta.url)))
+  .digest("hex")
+  .slice(0, 12);
 
 const withPWA = withPWAInit({
   dest: "public",
@@ -29,7 +38,7 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: /\.(?:png|jpg|jpeg|svg|webp|pbf|json)$/,
+        urlPattern: /\.(?:png|jpg|jpeg|svg|webp|pbf|json)(?:\?.*)?$/,
         handler: "StaleWhileRevalidate",
         options: { cacheName: "trotro-assets", expiration: { maxEntries: 200 } },
       },
@@ -40,6 +49,7 @@ const withPWA = withPWAInit({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  env: { NEXT_PUBLIC_PLACES_VERSION: placesVersion },
 };
 
 export default withPWA(nextConfig);

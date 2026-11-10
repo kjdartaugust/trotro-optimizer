@@ -219,8 +219,9 @@ Farm Rd"), and names its area after the nearest stop's town. A place in both lis
 under the plainer name: OpenStreetMap's when the names are the same (its tiles draw it; search
 still finds Overture's copy offline), Overture's when OSM's is the same name and more
 ("Zoomlion Ghana Limited" and OSM's "Zoomlion Ghana Limited Headquarters", 171 m apart: OSM's
-is left off the map by name). Search merges the two the same way, keeping the name that was
-typed. It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 16,171 places,
+is left off the map by name). Either way it sits where OSM puts it, on the building (Overture's
+Zoomlion listing sat on University Farm Rd, 171 m from it). Search merges the two the same way,
+keeping the name that was typed. It writes `frontend/public/network/places.json`: release 2026-10-21.0 has 16,171 places,
 8,580 with a street, ~330 KB over the wire. The app loads it after the network and the service
 worker keeps it, so search finds them offline.
 

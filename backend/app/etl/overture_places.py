@@ -8,7 +8,7 @@ merges the copies of one place, gives each a kind (label + map icon), a tier (th
 from) and its street when the address names one. A place both lists have shows once on the map,
 under the plainer name: OSM's when the names match (``on_osm_map``; search still finds Overture's
 copy offline), Overture's when OSM's is the same name and more (``hide_osm``: "Zoomlion Ghana
-Limited" over OSM's "Zoomlion Ghana Limited Headquarters").
+Limited" over OSM's "Zoomlion Ghana Limited Headquarters"), and at OSM's spot, on the building.
 
     pip install overturemaps                      # only for this script, not the server
     python -m app.etl.overture_places             # download both, write places.json
@@ -438,22 +438,35 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
     #    the same name -> OSM's (its tiles draw it); OSM's is shorter -> OSM's; Overture's is shorter
     #    ("Zoomlion Ghana Limited" vs OSM's "... Headquarters") -> Overture's, and OSM's is hidden by
     #    name, which only works for a name OSM uses once here (a filter hides every copy).
+    #    Where OSM has it under the same name or a fuller one, it sits where OSM puts it: mappers put
+    #    it on the building, while a listing can sit on its address's street (Zoomlion Ghana Limited
+    #    was on University Farm Rd, 171 m from its building). A shorter OSM name is often what it is
+    #    inside (a market, a mall), so a place keeps its own spot then.
     osm_grid = Grid()
     times = Counter(name for _, _, name in osm)
     for lon, lat, name in osm:
         k = squash(name)
         if k:
-            osm_grid.add(lon, lat, (k, name))
+            osm_grid.add(lon, lat, (k, name, lon, lat))
     longer_in_osm: dict[int, set[str]] = defaultdict(set)
+    moved = 0
     for i, p in enumerate(places):
         p["osm"] = False
-        for d, (k, name) in osm_grid.near(p["lon"], p["lat"], ONE_PLACE_M):
+        spots = []  # OSM's copy under the same name (0) or a fuller one (1): (which, metres, lon, lat)
+        for d, (k, name, lon, lat) in osm_grid.near(p["lon"], p["lat"], ONE_PLACE_M):
             if k == p["key"]:
-                p["osm"] = p["osm"] or d <= OSM_SAME_M
+                if d <= OSM_SAME_M:
+                    p["osm"] = True
+                    spots.append((0, d, lon, lat))
             elif k in p["key"] and (len(k) >= CORE_MIN or (d <= OSM_PART_M and len(k) >= 5)):
                 p["osm"] = True
-            elif p["key"] in k and len(p["key"]) >= CORE_MIN and times[name] == 1:
-                longer_in_osm[i].add(name)
+            elif p["key"] in k and len(p["key"]) >= CORE_MIN:
+                spots.append((1, d, lon, lat))
+                if times[name] == 1:
+                    longer_in_osm[i].add(name)
+        if spots:
+            _, d, p["lon"], p["lat"] = min(spots)
+            moved += d > 0
     hide_osm = sorted({n for i, names in longer_in_osm.items() if not places[i]["osm"] for n in names})
 
     # 4. The area to name in search: the nearest stop's town.
@@ -476,8 +489,8 @@ def build(rows: list[dict], osm: list[tuple[float, float, str]], stations: list[
 
     log.info(
         "%d Overture places: %d sure enough, %d after merging copies, %d also in OpenStreetMap, "
-        "%d OSM names hidden for a plainer Overture one, %d with a street",
-        len(rows), len(keep), len(places), sum(p["osm"] for p in places), len(hide_osm),
+        "%d OSM names hidden for a plainer Overture one, %d moved to OSM's spot, %d with a street",
+        len(rows), len(keep), len(places), sum(p["osm"] for p in places), len(hide_osm), moved,
         sum(1 for p in places if p["street"]),
     )
     return {

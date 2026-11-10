@@ -90,11 +90,11 @@ describe("the shipped places file", () => {
     expect(more.source).toMatch(/^Overture Maps Foundation, release \d{4}-\d{2}-\d{2}/);
   });
 
-  it("has the Zoomlion head office Google shows on University Farm Road, once", () => {
+  it("has the Zoomlion head office Google shows on University Farm Road, once, on its building", () => {
     const [z] = findMorePlaces(more, "Zoomlion Ghana Limited", onUniversityFarmRoad);
     expect(z).toMatchObject({ name: "Zoomlion Ghana Limited", detail: "University Farm Rd, Nmai Dzorm" });
-    expect(Math.abs(z.at[0] - -0.113)).toBeLessThan(0.002);
-    expect(Math.abs(z.at[1] - 5.673)).toBeLessThan(0.002);
+    // Where OpenStreetMap puts the building, not on the road where Overture's listing sat.
+    expect(z.at).toEqual([-0.11337, 5.67193]);
     // OpenStreetMap's "... Headquarters" building, 171 m away, is the same place: not drawn twice.
     expect(more.hideOsm).toContain("Zoomlion Ghana Limited Headquarters");
     // And search shows one of the two, the name that was typed (Photon's answer as it comes).
@@ -105,6 +105,7 @@ describe("the shipped places file", () => {
     };
     const got = rankPlaces([z, photon], "Zoomlion Ghana Limited", [-0.205, 5.6]);
     expect(got.map((p) => p.name)).toEqual(["Zoomlion Ghana Limited"]);
+    expect(got[0].at).toEqual([-0.11337, 5.67193]);
   });
 
   it("gives every place a kind, a tier the map knows, and a point near Accra", () => {
