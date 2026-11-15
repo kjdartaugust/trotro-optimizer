@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     access_radius_m: float = 3000.0     # ...to/from a trip's ends when no stop is that close
     walk_speed_mps: float = 1.25        # ~4.5 km/h
     board_penalty_min: float = 4.0      # average wait to board a trotro
-    transfer_penalty_min: float = 3.0   # friction of changing vehicles
+    transfer_penalty_min: float = 10.0  # "fastest" only: added per trotro boarded when comparing trips
 
     @property
     def cors_origin_list(self) -> list[str]:
