@@ -46,7 +46,9 @@ station **hub** nodes (street level) + per-`(route, stop)` **board** nodes. Edge
 penalty, the route's `board_fare` and +1 transfer), `alight` (board→hub, free), and `ride`
 (consecutive board nodes, carries `fare`/`minutes`). Trips run a **lexicographic Dijkstra** over
 the cost vector `(transfers, fare, minutes)`; the comparison key is reordered per mode
-(`fastest`/`cheapest`/`fewest`), and equal keys pop in push order (heapq's counter; the TS heap
+(`fastest`/`cheapest`/`fewest`); `fastest` compares `minutes + transfer_penalty_min (10) x boardings`
+so it stops taking changes that save a few minutes on paper (the minutes shown stay real), and equal
+keys pop in push order (heapq's counter; the TS heap
 copies it). The engine is pure and dataset-driven so the same code serves the API and unit tests,
 and is mirrored in TS.
 

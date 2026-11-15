@@ -47,7 +47,13 @@ DEFAULTS = {
     "access_radius_m": 3000.0,
     "walk_speed_mps": 1.25,
     "board_penalty_min": 4.0,
-    "transfer_penalty_min": 3.0,
+    # What "fastest" adds for each trotro boarded, when comparing trips (not to the minutes shown):
+    # changing means getting off, finding the next trotro's loading point and waiting for it to
+    # fill, which the 4-minute board wait doesn't cover. Without it "fastest" took two changes on an
+    # average trip to save a few minutes on paper (400 trips, 13 Nov 2026: 1.99 changes a trip; with
+    # 10, 1.20, for 3.8 minutes more on paper). Every trip boards at least once, so in effect it's
+    # a cost per change.
+    "transfer_penalty_min": 10.0,
 }
 
 
@@ -225,12 +231,12 @@ def build_graph(
     return g
 
 
-def _order_key(mode: Mode, transfers: int, fare: float, minutes: float) -> tuple:
+def _order_key(mode: Mode, transfers: int, fare: float, minutes: float, change_min: float = 0.0) -> tuple:
     if mode == "cheapest":
         return (round(fare, 2), minutes, transfers)
     if mode == "fewest":
         return (transfers, minutes, round(fare, 2))
-    return (minutes, round(fare, 2), transfers)  # fastest
+    return (minutes + change_min * transfers, round(fare, 2), transfers)  # fastest
 
 
 def _nearest_hubs(g: Graph, lat: float, lon: float) -> list[tuple[str, float, float]]:
@@ -283,14 +289,15 @@ def plan(
     best: dict[str, tuple] = {start: (0, 0.0, 0.0)}
     prev: dict[str, tuple[str, Edge]] = {}
     counter = 0
-    pq: list[tuple[tuple, int, str, tuple]] = [(_order_key(mode, 0, 0, 0), 0, start, (0, 0.0, 0.0))]
+    cm = g.opts.get("transfer_penalty_min", 0.0)
+    pq: list[tuple[tuple, int, str, tuple]] = [(_order_key(mode, 0, 0, 0, cm), 0, start, (0, 0.0, 0.0))]
 
     dest_node = "DEST"
 
     while pq:
         key, _, node, (tr, fare, mins) = heapq.heappop(pq)
         cur = best.get(node)
-        if cur is not None and _order_key(mode, *_as3(cur)) < key:
+        if cur is not None and _order_key(mode, *_as3(cur), cm) < key:
             continue
 
         # If this is a station near the destination, offer a final walk edge to DEST.
@@ -304,9 +311,9 @@ def plan(
             ntr = tr + e.transfers
             nfare = fare + e.fare
             nmins = mins + e.minutes
-            nkey = _order_key(mode, ntr, nfare, nmins)
+            nkey = _order_key(mode, ntr, nfare, nmins, cm)
             cand = (ntr, nfare, nmins)
-            if e.to not in best or nkey < _order_key(mode, *_as3(best[e.to])):
+            if e.to not in best or nkey < _order_key(mode, *_as3(best[e.to]), cm):
                 best[e.to] = cand
                 prev[e.to] = (node, e)
                 counter += 1

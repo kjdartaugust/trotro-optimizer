@@ -18,6 +18,8 @@ export interface EngineOpts {
   accessRadiusM: number;
   walkSpeedMps: number;
   boardPenaltyMin: number;
+  /** What "fastest" adds for each trotro boarded when comparing trips, not to the minutes shown:
+   *  changing means finding the next trotro and waiting for it to fill (see the Python engine). */
   transferPenaltyMin: number;
 }
 
@@ -26,7 +28,7 @@ export const DEFAULT_OPTS: EngineOpts = {
   accessRadiusM: 3000,
   walkSpeedMps: 1.25,
   boardPenaltyMin: 4,
-  transferPenaltyMin: 3,
+  transferPenaltyMin: 10,
 };
 
 export interface StationT {
@@ -177,11 +179,11 @@ export function buildGraph(
 
 type Vec = [number, number, number]; // (transfers, fare, minutes)
 
-function orderKey(mode: Mode, tr: number, fare: number, mins: number): Vec {
+function orderKey(mode: Mode, tr: number, fare: number, mins: number, changeMin = 0): Vec {
   const f = Math.round(fare * 100) / 100;
   if (mode === "cheapest") return [f, mins, tr];
   if (mode === "fewest") return [tr, mins, f];
-  return [mins, f, tr];
+  return [mins + changeMin * tr, f, tr];
 }
 
 function keyLess(a: Vec, b: Vec): boolean {
@@ -279,7 +281,8 @@ export function plan(
   const best = new Map<string, Vec>([[START, [0, 0, 0]]]);
   const prev = new Map<string, { from: string; edge: Edge }>();
   const heap = new Heap();
-  heap.push({ key: orderKey(mode, 0, 0, 0), node: START, vec: [0, 0, 0] });
+  const cm = g.opts.transferPenaltyMin ?? 0;
+  heap.push({ key: orderKey(mode, 0, 0, 0, cm), node: START, vec: [0, 0, 0] });
 
   const neighbours = (node: string): Edge[] =>
     node === START ? originEdges : g.adj.get(node) ?? [];
@@ -288,7 +291,7 @@ export function plan(
     const { node, vec } = heap.pop();
     const [tr, fare, mins] = vec;
     const cur = best.get(node);
-    if (cur && keyLess(orderKey(mode, cur[0], cur[1], cur[2]), orderKey(mode, tr, fare, mins)))
+    if (cur && keyLess(orderKey(mode, cur[0], cur[1], cur[2], cm), orderKey(mode, tr, fare, mins, cm)))
       continue;
 
     let edges = neighbours(node);
@@ -303,9 +306,9 @@ export function plan(
     }
     for (const e of edges) {
       const cand: Vec = [tr + e.transfers, fare + e.fare, mins + e.minutes];
-      const nkey = orderKey(mode, cand[0], cand[1], cand[2]);
+      const nkey = orderKey(mode, cand[0], cand[1], cand[2], cm);
       const b = best.get(e.to);
-      if (!b || keyLess(nkey, orderKey(mode, b[0], b[1], b[2]))) {
+      if (!b || keyLess(nkey, orderKey(mode, b[0], b[1], b[2], cm))) {
         best.set(e.to, cand);
         prev.set(e.to, { from: node, edge: e });
         heap.push({ key: nkey, node: e.to, vec: cand });
