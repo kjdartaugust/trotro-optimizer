@@ -110,9 +110,13 @@ inserts missing rows and never edits one, so community edits survive deploys. `b
 inside the Docker build context (`./backend`); the repo root is not.
 
 **Auth.** `auth.py` verifies Supabase-issued JWTs (HS256 via `SUPABASE_JWT_SECRET`); `sub` → local
-`users` row (upserted) carrying `trust_score` + `role`. With `DEV_AUTH=true`, `POST /auth/token`
-mints tokens so the flow is testable without a Supabase project. `require_moderator` gates
-moderation endpoints.
+`users` row (upserted) carrying `trust_score`. With `DEV_AUTH=true`, `POST /auth/token` hands a
+rider's pass to anyone, in any name (the live app runs this way: riders have no accounts); the
+account id is always uuid5 of the name, never an id taken as given. So a name or a stored `role`
+proves nothing: `require_moderator` takes only a pass carrying the stamp of the current
+`MODERATOR_KEY` (sent as `X-Moderator-Key` to `/auth/token?role=moderator`; 16+ characters, passes
+last 12 hours, 10 wrong keys an hour per address). No key set: nobody moderates. `users.role` is a
+record, not a grant.
 
 **The app (frontend).** One map page (`app/page.tsx`): `TripMap` (MapLibre over OpenFreeMap
 styles; the network, stops and the open trip/line as GeoJSON layers under the place labels), a

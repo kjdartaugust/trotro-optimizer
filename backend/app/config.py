@@ -12,7 +12,12 @@ class Settings(BaseSettings):
 
     supabase_jwt_secret: str = "super-secret-dev-jwt-signing-key-change-me"
     jwt_algorithm: str = "HS256"
+    # True: POST /auth/token hands a rider's pass to anyone (riders have no accounts).
     dev_auth: bool = True
+    # What a moderator sends (X-Moderator-Key) to get a moderator's pass: 16 characters or more,
+    # long and random, set on the host, never in git. Unset, nobody can moderate; changing it ends
+    # every moderator's pass at once (see app/auth.py).
+    moderator_key: str = ""
 
     auto_approve_threshold: float = 0.75
     default_trust_score: int = 20

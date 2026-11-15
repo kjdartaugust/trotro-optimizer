@@ -30,6 +30,10 @@ services:
         value: HS256
       - key: DEV_AUTH
         value: "true"
+      # What a moderator sends to get a moderator's pass (README "Trust & moderation model"):
+      # 16+ characters, long and random, set in the dashboard. Unset, nobody can moderate.
+      - key: MODERATOR_KEY
+        sync: false
       # Comma-separated allowed browser origins. Set to your Vercel URL after the frontend deploy.
       - key: CORS_ORIGINS
         sync: false
