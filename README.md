@@ -141,7 +141,7 @@ npm run dev
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | `GET`  | `/health` | – | liveness / readiness |
-| `POST` | `/auth/token` (dev) | – | dev-only token mint (prod uses Supabase JWT) |
+| `POST` | `/auth/token` | – / key | a rider's pass for anyone while `DEV_AUTH` is on; a moderator's pass (`role=moderator`) only with `X-Moderator-Key` |
 | `GET`  | `/stations` | – | list/search stations (bbox, near) |
 | `POST` | `/stations` | user | propose a new/edited station (contribution) |
 | `GET`  | `/routes` | – | list routes/segments |
@@ -284,6 +284,18 @@ moderation queue. Approvals raise the reporter's trust; rejections lower it. Far
 time-decayed so fuel-price jumps converge quickly on the new consensus. A place's pin moved by a
 rider is the exception: it applies at once and earns no trust (see Places).
 
+**Who moderates.** Riders have no accounts: while `DEV_AUTH` is on, `POST /auth/token` hands a
+rider's pass to anyone, in any name. So a name proves nothing, and neither does the role an
+account was first given. A moderator's pass is made with the server's `MODERATOR_KEY`:
+
+```bash
+curl -s -X POST "$API/auth/token?sub=ama&role=moderator" -H "X-Moderator-Key: $MODERATOR_KEY"
+```
+
+It lasts 12 hours and opens `/moderation/*`. With no key set (or one shorter than 16 characters)
+nobody can moderate; changing the key ends every moderator's pass at once; ten wrong keys from one
+address and that address waits an hour. Make the key long and random, and keep it out of git.
+
 ## Deployment
 
 The reference deployment uses **free tiers only**: **Neon** (Postgres + PostGIS), **Render**
@@ -325,9 +337,10 @@ prompts for (`sync: false`, never stored in git):
 - `DATABASE_URL` / `DATABASE_URL_SYNC` — the Neon strings from step 1.
 - `CORS_ORIGINS` — leave blank for now; fill in the Vercel origin after step 3.
 
-`SUPABASE_JWT_SECRET` is auto-generated; `DEV_AUTH=true` lets `POST /auth/token` mint tokens
-without a Supabase project. `REDIS_URL` is optional — the API degrades gracefully without it.
-Health check is `/health`.
+`SUPABASE_JWT_SECRET` is auto-generated; `DEV_AUTH=true` lets `POST /auth/token` hand riders a
+pass without a Supabase project. `MODERATOR_KEY` is optional: set a long random one in the
+dashboard to be able to moderate (see "Trust & moderation model"); until then nobody can.
+`REDIS_URL` is optional — the API degrades gracefully without it. Health check is `/health`.
 
 ### 3. Frontend — Vercel (Next.js PWA)
 
