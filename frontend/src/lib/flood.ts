@@ -307,11 +307,13 @@ export const FLOOD_COLOR: Record<Flooding, string> = {
   severe: "#e03131",
 };
 
-/** "3 pm", in Accra's time (GMT all year). */
+/**
+ * "3 pm", in Accra's time: GMT all year, so UTC's own hour. Worked out here and not by the
+ * browser's locale data, which in some versions writes midnight and noon as "0 am" and "0 pm".
+ */
 export function clock(at: number): string {
-  return new Date(at)
-    .toLocaleTimeString("en-GB", { hour: "numeric", hour12: true, timeZone: "Africa/Accra" })
-    .replace(/\s/g, " ");
+  const h = new Date(at).getUTCHours();
+  return `${h % 12 || 12} ${h < 12 ? "am" : "pm"}`;
 }
 
 /** When a forecast hour (the one ending at `at`) is: "now" while it's running, else "around 5 pm". */
