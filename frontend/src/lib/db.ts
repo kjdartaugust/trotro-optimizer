@@ -1,13 +1,15 @@
 /**
  * IndexedDB persistence for offline-first operation.
  *
- *  - `meta`         : dataset version cursor + last-sync timestamp, and riders' pin moves
- *                     (`placeFixes`: few, so one entry, and no new store to upgrade into)
+ *  - `meta`         : dataset version cursor + last-sync timestamp, riders' pin moves
+ *                     (`placeFixes`: few, so one entry, and no new store to upgrade into), and
+ *                     FloodWatch's last rain forecast (`flood`, lib/floodData.ts)
  *  - `stations`     : the offline station table (keyed by id)
  *  - `routes`       : the offline route table (keyed by id, stops embedded)
  *  - `outbox`       : contributions created offline, awaiting push (keyed by client_key)
  */
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import type { FloodFeed } from "./flood";
 import type { ApiPlaceFix, ApiRoute, ApiStation, QueuedContribution } from "./types";
 
 interface TrotroDB extends DBSchema {
@@ -118,6 +120,15 @@ export async function putPlaceFixes(fixes: ApiPlaceFix[]): Promise<void> {
   for (const f of fixes) all[f.key] = f;
   await tx.store.put(all, "placeFixes");
   await tx.done;
+}
+
+/** FloodWatch's rain forecast as this phone last had it: it still warns offline while its hours run. */
+export async function getFlood(): Promise<FloodFeed | null> {
+  return ((await (await db()).get("meta", "flood")) as FloodFeed | undefined) ?? null;
+}
+
+export async function putFlood(feed: FloodFeed): Promise<void> {
+  await (await db()).put("meta", feed, "flood");
 }
 
 export async function enqueue(c: QueuedContribution): Promise<void> {

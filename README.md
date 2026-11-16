@@ -22,6 +22,9 @@ fare and time — built on community data and working fully offline.
 - **Offline-first** — The full routing dataset is packaged and downloaded to the device
   (IndexedDB). Routing works with **zero network**. When back online the client pulls deltas
   (`/sync/changes?since=…`) and pushes queued contributions.
+- **Flood warnings** — Each trip says whether its rides are expected to flood, where and when,
+  from [FloodWatch Ghana](https://floodwatch-ghana-ten.vercel.app)'s risk map and rain forecast,
+  judged on the stretch of road each ride covers (below).
 
 ## The app
 
@@ -49,6 +52,9 @@ Built for a phone first, the way Google or Apple Maps works:
 - **Compare at a glance.** Fastest, cheapest and fewest changes side by side (one card when they
   agree), then step by step: walk here, take the trotro to Nungua, the stops on the way, get off
   at GBC Second, the fare for each part, "Paid something else?" to report it.
+- **Rain in the plan.** When heavy rain is forecast, each option says how badly its rides are
+  expected to flood, the open trip says which trotro meets water and near which stop, and the
+  map edges that stretch in the warning's colour (Flood warnings, below).
 - **A swipe-up sheet** over the map on phones; a side panel on a laptop.
 - **Fast on a first visit.** The network ships with the app (`public/network/dataset.json`), so
   it opens in seconds from the CDN instead of waiting up to a minute for the free-tier API to
@@ -79,7 +85,8 @@ trotro-optimizer/
 │   ├── app/
 │   │   ├── routing/    Graph + multi-criteria Dijkstra (server mirror of TS engine)
 │   │   ├── routers/    /routes /stations /contributions /moderation /sync /auth
-│   │   ├── etl/        builds seed/accra.json and the route lines (OpenStreetMap), places.json (Overture)
+│   │   ├── etl/        builds seed/accra.json and the route lines (OpenStreetMap), places.json (Overture),
+│   │   │               floodrisk.json (FloodWatch Ghana's risk cells)
 │   │   └── ...
 │   ├── migrations/     SQL schema (Postgres + PostGIS + H3 spatial index)
 │   ├── seed/           the network: accra.json (OpenStreetMap), demo.json (17-stop test network)
@@ -88,10 +95,11 @@ trotro-optimizer/
 │   ├── public/network/ dataset.json (first-run network snapshot), shapes.json (route lines), places.json
 │   ├── scripts/        snapshot.mjs: refresh dataset.json from the API
 │   └── src/
-│       ├── app/        the map page and the report page
-│       ├── components/ map, sheet, search, trip options and steps, line/stop cards
+│       ├── app/        the map page, the report page, and api/flood (FloodWatch's rain forecast, kept)
+│       ├── components/ map, sheet, search, trip options and steps, flood notice, line/stop cards
+│       ├── data/       floodrisk.json: FloodWatch's flood-risk cells
 │       ├── engine/     TypeScript routing engine (offline, mirrors backend)
-│       └── lib/        sync, db (IndexedDB), api client, planner worker, shapes, places, trips
+│       └── lib/        sync, db (IndexedDB), api client, planner worker, shapes, places, trips, flood
 ├── docker-compose.yml  Postgres/PostGIS + Redis + backend + frontend
 └── .github/workflows/  CI (lint, test, build)
 ```
@@ -156,7 +164,9 @@ npm run dev
 | `GET`  | `/fareboards/status` | – | whether this server can read fare board photos |
 | `POST` | `/fareboards/read` | – | read a fare board photo (multipart `photo`) into rows; not stored |
 
-Full schema at `/docs` (Swagger) and `/openapi.json`.
+Full schema at `/docs` (Swagger) and `/openapi.json`. One more address is served by the app
+itself, not this API: `GET /api/flood`, FloodWatch's rain forecast for every line (Flood warnings,
+below).
 
 ## The network: Accra's trotros, from OpenStreetMap
 
@@ -275,6 +285,56 @@ Unset, the page skips the photo and riders type the board in. Reads are capped a
 `FAREBOARD_READS_PER_HOUR` per address (20) and `FAREBOARD_READS_PER_DAY` in all (300), to stay
 inside free tiers.
 
+## Flood warnings: from FloodWatch Ghana
+
+[FloodWatch Ghana](https://floodwatch-ghana-ten.vercel.app)
+([its repo](https://github.com/kjdartaugust/flood-risk-ghana)) scores Accra's ground for flooding
+and checks the rain every three hours. A trip here says what that means for it:
+
+- **On each option's card**: "Flood watch", "Flooding likely" or "Severe flooding", so the ways
+  to go can be told apart before choosing one.
+- **On the open trip**: the rain ("Heavy rain around 5 pm (22 mm)"), which trotro meets water and
+  near which stop, what to do about it, how fresh the forecast is, and a link to that line on
+  FloodWatch. On the map, that stretch of the ride is edged in the warning's colour.
+- **When every ride could be judged and none floods**: one quiet line, "No flooding expected on
+  this trip in the next few hours".
+
+**Judged on the stretch you ride, not the whole line.** FloodWatch scores the city in cells about
+460 m across (0 to 100: how badly a spot floods in heavy rain), calls a line's risk the worst cell
+whose centre is within 400 m of it, and blends that with an hour's rain: watch (risk 30+ and
+5 mm), warning (45+ and 10 mm, or 35 mm anywhere), severe (60+ and 20 mm). 259 of its 280 lines
+cross a 45+ cell somewhere, so in heavy rain nearly every line warns at once, which tells a rider
+little about their own trip. The app applies the same rule (`lib/flood.ts` `statusOf`, kept word
+for word with `_status` in FloodWatch's `routes_service.py`) to just the road between where you
+board and where you get off. From Kaneshie to Madina in 22 mm of rain, the faster option is
+"Flooding likely" and the cheaper one, which runs through Circle, is "Severe flooding".
+
+- **The cells** (1,045 of them, FloodWatch's model `logistic-v2`) ship with the app:
+  `frontend/src/data/floodrisk.json`, built from FloodWatch's public API by
+  `python -m app.etl.flood_tiles`. Rebuild it when FloodWatch retrains or redraws its cells. The
+  same run saves FloodWatch's own score for each of its lines
+  (`backend/tests/fixtures/floodwatch_lines.json`), and the tests hold the app's arithmetic to
+  it: on four routes in five the whole line scores exactly as FloodWatch scores it. Where it
+  doesn't, the road differs, not the sum: FloodWatch keeps one direction's road for both, and
+  this app draws each direction's own.
+- **The rain** comes through the app's own `GET /api/flood`
+  (`frontend/src/app/api/flood/route.ts`): FloodWatch's forecast for every line, trimmed to the
+  rain per hour (~40 KB), kept for 175 minutes and handed out at once. FloodWatch's free server
+  sleeps when idle and takes about 100 seconds to wake; no rider waits on that. A refresh that
+  fails leaves the kept forecast in place. Each phone keeps the forecast too (IndexedDB), so it
+  still warns offline for as long as its hours run.
+- **Private.** Nothing about the rider goes anywhere: the whole city's forecast comes down and
+  the phone works out its own trip.
+- **Honest about what it doesn't know.** Nothing is said, warning or all-clear, once FloodWatch's
+  last rain check is over 12 hours old, or for a ride whose line has no forecast. The all-clear
+  also needs most of each ride's road to lie in the area FloodWatch has scored (central Accra,
+  about 34 km by 23 km). Walks aren't judged. Times are FloodWatch's hours: "around 5 pm" is the
+  hour ending at 5.
+- **Off a deploy it asks nobody.** On a laptop or in CI `/api/flood` answers "nothing yet"
+  unless `FLOODWATCH_API_URL` says whom to ask, so tests and builds never wake FloodWatch's
+  server (it has a monthly allowance of waking hours). The deployed app asks at most once per
+  175 minutes, however many riders there are.
+
 ## Trust & moderation model
 
 Each user has a `trust_score` (0–100). A contribution's weight = f(reporter trust, corroborating
@@ -348,10 +408,18 @@ Import the repo in Vercel with **Root Directory = `frontend`**. Set one env var:
 
 - `NEXT_PUBLIC_API_URL` = your Render backend URL (e.g. `https://trotro-api.onrender.com`).
 
+Flood warnings need nothing set on Vercel: there the app asks FloodWatch Ghana's public API by
+itself. Anywhere else (Docker, a laptop), set `FLOODWATCH_API_URL` to turn them on (the address is
+in `.env.example`); unset, the app simply shows none.
+
 Or from the CLI, at the repo root:
 ```bash
 vercel --cwd frontend --prod
 ```
+
+A deploy's build asks FloodWatch for its forecast so the new version starts with one. If
+FloodWatch's server is asleep the build waits for it to wake, up to two and a half minutes; if it
+can't be had, the deploy still goes through and the first forecast arrives within three hours.
 
 ### 4. Wire CORS + verify
 
@@ -384,12 +452,14 @@ See `.env.example` for every variable and `docker-compose.yml` for the local top
 ## Tests
 
 ```bash
-cd backend && pytest              # routing engine + API + trust scoring + the OSM import + route lines + places
-cd frontend && npm test           # engine parity, route lines, trip options, place search and the places file
+cd backend && pytest              # routing engine + API + trust scoring + the OSM import + route lines + places + flood cells
+cd frontend && npm test           # engine parity, route lines, trip options, place search, the places file, flood warnings
 ```
 
 Both engines are held to the same answers on 30 real trips across the network
-(`backend/tests/fixtures/parity.json`); the network sync is tested against CI's Postgres.
+(`backend/tests/fixtures/parity.json`); the network sync is tested against CI's Postgres. Flood
+warnings are held to FloodWatch's own score for each line
+(`backend/tests/fixtures/floodwatch_lines.json`).
 
 ## License
 

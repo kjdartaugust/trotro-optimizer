@@ -21,6 +21,7 @@ python -m app.seed --reset --file seed/demo.json   # dev: the 17-station demo ne
 python -m app.etl.osm_network        # rebuild seed/accra.json from OpenStreetMap (Overpass)
 python -m app.etl.osm_shapes         # rebuild the map's route lines (frontend/public/network/shapes.json)
 python -m app.etl.overture_places    # rebuild the map's/search's places (public/network/places.json; pip install overturemaps)
+python -m app.etl.flood_tiles        # rebuild FloodWatch's risk cells (frontend/src/data/floodrisk.json) + tests/fixtures/floodwatch_lines.json
 python -m tests.parity               # regenerate tests/fixtures/parity.json after either of these
 pytest                               # all tests (test_seed needs Postgres; skipped without)
 pytest tests/test_engine.py -k plan  # single test / filter
@@ -30,7 +31,7 @@ Frontend (from `frontend/`):
 ```bash
 npm install
 npm run dev                          # app on :3000
-npm test                             # engine parity, route lines, trip options (vitest)
+npm test                             # engine parity, route lines, trip options, flood warnings (vitest)
 npm run build
 npm run snapshot                     # refresh public/network/dataset.json from the live API
 ```
@@ -175,6 +176,30 @@ false})`: a diffed style drops our layers with no `style.load` to re-add them.
 `matchStops`, which mirrors `match_stops` in the ETL (stops placed on the line in order). A route
 without a line is drawn stop to stop. Rebuild after `osm_network`.
 
+**Flood warnings** (from FloodWatch Ghana, the sister repo `flood-risk-ghana`). FloodWatch
+scores Accra in H3 cells (0..100), calls a line's risk the worst cell whose centre is within 400 m
+of it, and blends that with an hour's forecast rain into clear/watch/warning/severe. Nearly every
+whole line crosses a bad cell, so the app applies the same rule to **just the stretch a ride
+covers**: `lib/flood.ts` (`statusOf` = FloodWatch's `_status`, word for word; `riskAlong` cuts a
+road into 40 m pieces and gives each the worst cell in reach; `stretches`; `lineFor`: a route's
+FloodWatch line by OSM id, the other direction's, then the two ends' names; `hoursFor`: the hours
+a trip leaving now can meet, never fewer than two; `usable`: nothing is said once FloodWatch's
+last check is over 12 h old) and `lib/tripFlood.ts` (`tripFlood`: each ride's own status, where
+(`near`: the nearest stop) and when; `judged` is false when a ride has no forecast or most of its
+road is unscored, and only a judged trip may be called clear). The cells ship as a chunk
+(`src/data/floodrisk.json`, `app/etl/flood_tiles.py`, which also writes
+`tests/fixtures/floodwatch_lines.json`; rebuild both together, when FloodWatch retrains). The rain
+comes through `app/api/flood/route.ts`: a page Next keeps (`revalidate` 10500 s; it must stay a
+static GET, so no `fetch`, no reading the request), which **throws** when FloodWatch can't be had
+so the last good forecast stays, and uses `node:http(s)` because Next's own `fetch` cache made a
+slow FloodWatch hold up the rider's request. It asks FloodWatch only when `VERCEL` or
+`FLOODWATCH_API_URL` is set: a laptop or CI gets "nothing yet" and never wakes FloodWatch's free
+server (monthly waking-hours allowance; keep asks rare). `lib/floodData.ts` (`useFlood`) loads the
+cells, keeps the forecast in IndexedDB `meta.flood` (it still warns offline) and asks again when a
+newer check is due. Screens: a flag on each `Options` card, `FloodNote` over the steps, a line on
+the ride in `Steps`, and `Drawn.floods` → TripMap's `ride-flood` layer (under the casing, so the
+ride keeps its colour). Walks aren't judged.
+
 **First visit.** `ensureNetwork` (sync.ts) loads `public/network/dataset.json`, the API's
 `/sync/dataset` saved by `npm run snapshot`, from the CDN; `pull` then asks the API for changes
 since its version. Excluded from the PWA precache (it lives in IndexedDB after the first visit).
@@ -189,3 +214,5 @@ Refresh it whenever the API's network is rebuilt.
   the route's `board_fare` once per boarding.
 - OSM data is ODbL: keep the "© OpenStreetMap contributors" credit wherever stops/routes are shown.
 - When editing routing behaviour, update **both** engines and the parity test.
+- Flood warnings say what FloodWatch says: keep `lib/flood.ts` `statusOf` and the 400 m reach in
+  step with FloodWatch's `_status` and `set_baselines`, and its wording and colours with its own.

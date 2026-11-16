@@ -50,6 +50,8 @@ export interface Drawn {
   walks: LngLat[][];
   /** Where you get on and off, or an open line's stops. */
   points: { at: LngLat; color: string; major?: boolean }[];
+  /** The parts of the rides FloodWatch expects to flood, in the warning's colour (lib/tripFlood). */
+  floods?: { color: string; coords: LngLat[] }[];
 }
 
 const NONE: Drawn = { rides: [], walks: [], points: [] };
@@ -122,6 +124,15 @@ function lineLayers(dark: boolean, quiet: boolean): LayerSpecification[] {
         "line-blur": 8,
         "line-opacity": dark ? 0.5 : 0.32,
       },
+    },
+    {
+      // Under the casing and wider: a ride keeps its own colour, with the warning's colour along
+      // both edges where it is expected to flood. Reads the same whatever the route's colour.
+      id: "ride-flood",
+      type: "line",
+      source: "flood",
+      layout: ROUND,
+      paint: { "line-color": ["get", "color"], "line-width": byZoom(10, 12, 14, 18, 17, 25) },
     },
     {
       id: "ride-casing",
@@ -555,9 +566,10 @@ function stopData(stops: ApiStation[]) {
 }
 
 function drawnData(d: Drawn | null) {
-  const { rides, walks, points } = d ?? NONE;
+  const { rides, walks, points, floods = [] } = d ?? NONE;
   return {
     ride: fc(rides.filter((r) => r.coords.length > 1).map((r) => line(r.coords, { color: r.color }))),
+    flood: fc(floods.filter((f) => f.coords.length > 1).map((f) => line(f.coords, { color: f.color }))),
     walk: fc(walks.filter((w) => w.length > 1).map((w) => line(w))),
     points: fc(
       points.map((p) => ({
