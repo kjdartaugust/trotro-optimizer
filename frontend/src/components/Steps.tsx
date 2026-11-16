@@ -6,10 +6,12 @@
  */
 import Link from "next/link";
 import type { Leg } from "@/engine/engine";
+import { FLOOD_TEXT, whenWords } from "@/lib/flood";
 import { cedis, metres, minutes, plural, routeColor } from "@/lib/format";
 import { rideSpan, stopsOf, termini, type Network } from "@/lib/network";
 import type { End, TripOption } from "@/lib/trip";
-import { ChevronIcon, WalkIcon } from "./icons";
+import type { RideFlood, TripFlood } from "@/lib/tripFlood";
+import { ChevronIcon, FloodIcon, WalkIcon } from "./icons";
 import { RoutePill } from "./Options";
 
 export default function Steps({
@@ -18,6 +20,8 @@ export default function Steps({
   from,
   to,
   estimated,
+  flood,
+  now,
   onLine,
 }: {
   option: TripOption;
@@ -25,11 +29,16 @@ export default function Steps({
   from: End;
   to: End;
   estimated: boolean;
+  /** What FloodWatch expects on each leg (lib/tripFlood), once that is known, and when it was judged. */
+  flood?: TripFlood | null;
+  now?: number;
   onLine: (id: string) => void;
 }) {
   const it = option.it;
   // A walk of a few metres is the trip starting or ending right at a stop: nothing to do.
-  const legs = it.legs.filter((l) => l.kind === "ride" || l.distanceM >= 25);
+  const legs = it.legs
+    .map((leg, i) => ({ leg, wet: flood?.legs[i] ?? null }))
+    .filter(({ leg }) => leg.kind === "ride" || leg.distanceM >= 25);
   return (
     <div className="steps-wrap">
       <ol className="steps">
@@ -40,11 +49,19 @@ export default function Steps({
             <small>Start</small>
           </div>
         </li>
-        {legs.map((leg, i) =>
+        {legs.map(({ leg, wet }, i) =>
           leg.kind === "walk" ? (
             <WalkStep key={i} leg={leg} first={i === 0} last={i === legs.length - 1} to={to} />
           ) : (
-            <RideStep key={i} leg={leg} net={net} estimated={estimated} onLine={onLine} />
+            <RideStep
+              key={i}
+              leg={leg}
+              net={net}
+              estimated={estimated}
+              flood={wet}
+              now={now ?? Date.now()}
+              onLine={onLine}
+            />
           )
         )}
         <li className="step place">
@@ -94,11 +111,15 @@ function RideStep({
   leg,
   net,
   estimated,
+  flood,
+  now,
   onLine,
 }: {
   leg: Leg;
   net: Network;
   estimated: boolean;
+  flood: RideFlood | null;
+  now: number;
   onLine: (id: string) => void;
 }) {
   const route = net.route.get(leg.routeId ?? "");
@@ -123,6 +144,15 @@ function RideStep({
         <p>
           Board at <b>{leg.fromName}</b>
         </p>
+        {flood && flood.status !== "clear" && (
+          <p className={`ride-flood flood-${flood.status}`}>
+            <FloodIcon size={15} />
+            <span>
+              {FLOOD_TEXT[flood.status].flag}
+              {flood.near ? ` near ${flood.near}` : ""}, {whenWords(flood.at, now)}
+            </span>
+          </p>
+        )}
         {between.length > 0 ? (
           <details className="ride-stops">
             <summary>

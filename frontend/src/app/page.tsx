@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LineCard, LinesHere, MoveCard, PinCard, StopCard } from "@/components/Cards";
+import FloodNote from "@/components/FloodNote";
 import { HistoryIcon, LocateIcon, MapTapIcon, SearchIcon, ShareIcon } from "@/components/icons";
 import Options from "@/components/Options";
 import SearchPanel from "@/components/SearchPanel";
@@ -15,6 +16,8 @@ import { DEFAULT_OPTS } from "@/engine/engine";
 import { devLogin, isOnline, loadToken } from "@/lib/api";
 import { submitContribution } from "@/lib/contribute";
 import { allPlaceFixes, allRoutes, allStations, hasDataset, outbox, putPlaceFixes } from "@/lib/db";
+import { FLOOD_COLOR } from "@/lib/flood";
+import { useFlood } from "@/lib/floodData";
 import { cedis, metres, minutes, routeColor } from "@/lib/format";
 import {
   buildNetwork,
@@ -50,6 +53,7 @@ import {
   type Recent,
   type TripOption,
 } from "@/lib/trip";
+import { tripFlood, type TripFlood } from "@/lib/tripFlood";
 import type { ApiPlaceFix } from "@/lib/types";
 
 // MapLibre touches window: client only.
@@ -105,6 +109,8 @@ export default function Home() {
   const ticket = useRef(0);
   const linked = useRef(false);
   const view = useRef<LngLat>(START_VIEW);
+  // FloodWatch's risk cells and rain forecast: in a moment or two after the page, never before it.
+  const flood = useFlood();
 
   const frame = (coords: LngLat[]) => setFit((f) => ({ coords, seq: (f?.seq ?? 0) + 1 }));
 
@@ -444,6 +450,14 @@ export default function Home() {
 
   const option = result?.state === "found" ? result.options[chosen] : null;
 
+  // What FloodWatch expects on each option's rides: null until its cells and forecast are in.
+  const floods = useMemo<TripFlood[] | null>(() => {
+    const { tiles, feed, now } = flood;
+    if (result?.state !== "found" || !net || !tiles || !feed) return null;
+    return result.options.map((o) => tripFlood(net, o.it, tiles, feed, now));
+  }, [result, net, flood]);
+  const wet = floods?.[chosen] ?? null;
+
   const drawn = useMemo<Drawn | null>(() => {
     if (!net) return null;
     if (panel.kind === "line") return lineDrawn(net, panel.id);
@@ -460,9 +474,9 @@ export default function Home() {
       const at: LngLat | null = panel.kind === "pin" ? panel.at : s ? [s.lon, s.lat] : null;
       return at ? { rides: [], walks: [], points: [{ at, color: routeColor(null), major: true }] } : null;
     }
-    if (option && from && to) return tripDrawn(net, option, from, to);
+    if (option && from && to) return tripDrawn(net, option, from, to, wet);
     return null;
-  }, [net, panel, option, from, to]);
+  }, [net, panel, option, from, to, wet]);
 
   // Frame each trip as it's found or another option is chosen.
   useEffect(() => {
@@ -679,18 +693,29 @@ export default function Home() {
                     It&apos;s only {metres(straight)} as the crow flies: about {minutes(straight / 75)} on foot.
                   </p>
                 )}
-                <Options options={result.options} chosen={chosen} net={net} onChoose={setChosen} />
+                <Options
+                  options={result.options}
+                  chosen={chosen}
+                  net={net}
+                  floods={floods?.map((f) => f.status)}
+                  onChoose={setChosen}
+                />
                 <div className="trip-actions">
                   <button type="button" className="chip" onClick={share}>
                     <ShareIcon size={16} /> Share this trip
                   </button>
                 </div>
+                {wet && flood.feed && (
+                  <FloodNote flood={wet} it={option.it} net={net} feed={flood.feed.feed} now={flood.now} />
+                )}
                 <Steps
                   option={option}
                   net={net}
                   from={from}
                   to={to}
                   estimated={result.estimated}
+                  flood={wet}
+                  now={flood.now}
                   onLine={openLine}
                 />
               </div>
@@ -819,9 +844,16 @@ function Welcome({
   );
 }
 
-/** A trip on the map: rides along their roads in their colours, walks dotted, stops marked. */
-function tripDrawn(net: Network, o: TripOption, from: End, to: End): Drawn {
-  const out: Drawn = { rides: [], walks: [], points: [] };
+/** A trip on the map: rides along their roads in their colours, walks dotted, stops marked, and
+ *  the stretches FloodWatch expects to flood edged in the warning's colour. */
+function tripDrawn(net: Network, o: TripOption, from: End, to: End, wet: TripFlood | null): Drawn {
+  const floods: NonNullable<Drawn["floods"]> = [];
+  for (const f of wet?.legs ?? []) {
+    for (const part of f?.parts ?? []) {
+      if (part.status !== "clear") floods.push({ color: FLOOD_COLOR[part.status], coords: part.coords });
+    }
+  }
+  const out: Drawn = { rides: [], walks: [], points: [], floods };
   const at = (sid: string | null): LngLat | null => {
     const s = sid ? net.station.get(sid) : undefined;
     return s ? [s.lon, s.lat] : null;

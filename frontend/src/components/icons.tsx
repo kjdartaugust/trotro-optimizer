@@ -139,6 +139,15 @@ export const CheckIcon = ({ size = 18 }: P) => (
   </Icon>
 );
 
+/** Rain over rising water: a flood warning. */
+export const FloodIcon = ({ size = 18 }: P) => (
+  <Icon size={size}>
+    <path d="M12 2.8c2.1 2.5 3.2 4.3 3.2 5.8a3.2 3.2 0 0 1-6.4 0c0-1.5 1.1-3.3 3.2-5.8z" />
+    <path d="M3 16.4c1.5 0 1.5-1.3 3-1.3s1.5 1.3 3 1.3 1.5-1.3 3-1.3 1.5 1.3 3 1.3 1.5-1.3 3-1.3 1.5 1.3 3 1.3" />
+    <path d="M3 20.6c1.5 0 1.5-1.3 3-1.3s1.5 1.3 3 1.3 1.5-1.3 3-1.3 1.5 1.3 3 1.3 1.5-1.3 3-1.3 1.5 1.3 3 1.3" />
+  </Icon>
+);
+
 export const CameraIcon = ({ size = 20 }: P) => (
   <Icon size={size}>
     <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />

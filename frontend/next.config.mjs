@@ -50,6 +50,9 @@ const withPWA = withPWAInit({
 const nextConfig = {
   reactStrictMode: true,
   env: { NEXT_PUBLIC_PLACES_VERSION: placesVersion },
+  // A deploy's build lets a sleeping FloodWatch wake (about 100 s) so /api/flood starts with a
+  // real forecast: app/api/flood/route.ts waits up to 150 s for it.
+  staticPageGenerationTimeout: 180,
 };
 
 export default withPWA(nextConfig);

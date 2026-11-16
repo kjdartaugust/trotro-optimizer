@@ -1143,6 +1143,150 @@ h3 {
   margin-top: 12px;
 }
 
+/* ── Flood warnings: what FloodWatch expects on a trip, in its own colours ── */
+
+.flood-watch {
+  --flood: #e0a400;
+  --flood-ink: #8a5f00;
+  --flood-soft: rgba(224, 164, 0, 0.15);
+  --on-flood: #1c1300;
+}
+
+.flood-warning {
+  --flood: #f76707;
+  --flood-ink: #b54708;
+  --flood-soft: rgba(247, 103, 7, 0.12);
+  --on-flood: #ffffff;
+}
+
+.flood-severe {
+  --flood: #e03131;
+  --flood-ink: #c02626;
+  --flood-soft: rgba(224, 49, 49, 0.11);
+  --on-flood: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .flood-watch {
+    --flood-ink: #ffd43b;
+    --flood-soft: rgba(224, 164, 0, 0.18);
+  }
+
+  .flood-warning {
+    --flood-ink: #ffa94d;
+    --flood-soft: rgba(247, 103, 7, 0.2);
+  }
+
+  .flood-severe {
+    --flood-ink: #ff8787;
+    --flood-soft: rgba(224, 49, 49, 0.22);
+  }
+}
+
+/* On an option's card: which ways meet water, before choosing one. */
+.option-flood {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 6px;
+  color: var(--flood-ink);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.25;
+}
+
+.option-flood svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* Over the steps of the open trip: what, where and when. */
+.flood-note {
+  display: flex;
+  gap: 11px;
+  margin-top: 14px;
+  padding: 13px 14px;
+  border-radius: 14px;
+  background: var(--flood-soft);
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.flood-note-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--flood);
+  color: var(--on-flood);
+}
+
+.flood-note-body {
+  min-width: 0;
+}
+
+.flood-note-body strong {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.flood-note-body p {
+  margin: 3px 0 0;
+}
+
+.flood-note .flood-source {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.flood-source a {
+  color: var(--flood-ink);
+  font-weight: 650;
+}
+
+/* Every ride judged and none floods: one quiet line. */
+.flood-clear {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 12px 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.flood-clear svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ok-ink);
+}
+
+.flood-clear a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* On the ride that meets it. */
+.step-body .ride-flood {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--flood-ink);
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.ride-flood svg {
+  flex: none;
+  margin-top: 2px;
+}
+
 /* ── Trip: step by step ──────────────────────────────────────────────────── */
 
 .steps {
