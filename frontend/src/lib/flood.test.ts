@@ -198,7 +198,10 @@ describe("saying it", () => {
 
   it("tells the time as Accra does", () => {
     expect(clock(T0 + H)).toBe("5 pm");
+    expect(clock(Date.UTC(2026, 10, 16, 9))).toBe("9 am");
+    // Midnight and noon are 12, whatever the browser's own clock words would make of them.
     expect(clock(Date.UTC(2026, 10, 16, 0))).toBe("12 am");
+    expect(clock(Date.UTC(2026, 10, 16, 12))).toBe("12 pm");
   });
 
   it("says now for the hour that is running", () => {
